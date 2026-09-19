@@ -1,0 +1,716 @@
+openapi: 3.0.3
+info:
+  title: Linux Firewall Manager (LFM) REST API
+  version: 1.0.0
+  description: >
+    API REST para gerenciamento centralizado de firewalls iptables, ip6tables e ipset
+    em múltiplos servidores Linux heterogêneos.
+servers:
+  - url: https://painel.exemplo.com/api/v1
+    description: Servidor de Produção LFM
+
+tags:
+  - name: Auth
+    description: Autenticação local (root), OIDC e gerenciamento de sessões
+  - name: Enrollment
+    description: Emissão de tokens e registro de novos agentes
+  - name: Servers
+    description: Inventário, agrupamento, tags e status dos servidores gerenciados
+  - name: Rules & Chains
+    description: CRUD de regras, chains, drafts, diffs e aplicação atômica com rollback
+  - name: IPSets
+    description: Gerenciamento de conjuntos de IPs/portas e feeds dinâmicos
+  - name: Backups
+    description: Backups pontuais, snapshots automáticos e restauração
+  - name: Metrics
+    description: Estatísticas de tráfego, pacotes e bytes em tempo real
+  - name: Audit
+    description: Trilha de auditoria imutável e exportação de logs
+
+paths:
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login com usuário local único (root)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                  example: root
+                password:
+                  type: string
+                  format: password
+                totp_code:
+                  type: string
+                  example: "123456"
+      responses:
+        '200':
+          description: Login bem-sucedido (Cookie HttpOnly de sessão atribuído)
+        '401':
+          description: Credenciais inválidas ou TOTP incorreto
+        '423':
+          description: Conta temporariamente bloqueada por excesso de tentativas
+
+  /auth/oidc/login:
+    get:
+      tags: [Auth]
+      summary: Iniciar fluxo OIDC PKCE
+      responses:
+        '302':
+          description: Redirecionamento para o Provedor de Identidade (IdP)
+
+  /auth/oidc/callback:
+    get:
+      tags: [Auth]
+      summary: Callback de retorno do IdP com code e state
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Autenticado com sucesso, redireciona para o painel SPA
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Obter perfil do usuário autenticado
+      responses:
+        '200':
+          description: Dados do usuário e permissões
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Encerrar sessão ativa
+      responses:
+        '200':
+          description: Sessão invalidada com sucesso
+
+  /enrollment/tokens:
+    post:
+      tags: [Enrollment]
+      summary: Gerar token de uso único para provisionamento de agente
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target_group_id:
+                  type: string
+                initial_tags:
+                  type: array
+                  items:
+                    type: string
+                ttl_hours:
+                  type: integer
+                  default: 24
+      responses:
+        '201':
+          description: Token gerado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  expires_at:
+                    type: string
+                    format: date-time
+
+  /enrollment/claim:
+    post:
+      tags: [Enrollment]
+      summary: Endpoint consumido pelo fw-agent para trocar token por certificado mTLS
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, csr_pem, hostname]
+              properties:
+                token:
+                  type: string
+                hostname:
+                  type: string
+                csr_pem:
+                  type: string
+                os_distro:
+                  type: string
+                kernel_version:
+                  type: string
+      responses:
+        '200':
+          description: Certificado de cliente emitido com sucesso
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  server_id:
+                    type: string
+                  ca_cert_pem:
+                    type: string
+                  client_cert_pem:
+                    type: string
+
+  /servers:
+    get:
+      tags: [Servers]
+      summary: Listar servidores gerenciados com filtros por status, grupo e tags
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [online, offline, drift, all]
+        - name: tag
+          in: query
+          schema:
+            type: string
+        - name: group_id
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Lista de servidores
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ServerItem'
+
+  /servers/{id}:
+    get:
+      tags: [Servers]
+      summary: Obter detalhes técnicos de um servidor
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServerDetail'
+    delete:
+      tags: [Servers]
+      summary: Desvincular servidor e revogar certificado mTLS
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Servidor desvinculado e certificado revogado
+
+  /servers/{id}/rules:
+    get:
+      tags: [Rules & Chains]
+      summary: Obter todas as tabelas, chains e regras ativas no servidor
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: table
+          in: query
+          schema:
+            type: string
+            enum: [filter, nat, mangle, raw, security]
+        - name: ip_version
+          in: query
+          schema:
+            type: string
+            enum: [v4, v6]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RulesetResponse'
+
+  /rules/batch/preview:
+    post:
+      tags: [Rules & Chains]
+      summary: Gerar preview de diff e checagem de risco para aplicação em múltiplos servidores
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_servers, operation, rule]
+              properties:
+                target_servers:
+                  type: array
+                  items:
+                    type: string
+                operation:
+                  type: string
+                  enum: [add, edit, delete, reorder]
+                rule:
+                  $ref: '#/components/schemas/FirewallRuleInput'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchPreviewResponse'
+
+  /rules/batch/apply:
+    post:
+      tags: [Rules & Chains]
+      summary: Aplicar regras em múltiplos servidores com proteção de rollback automático
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_servers, draft_id]
+              properties:
+                target_servers:
+                  type: array
+                  items:
+                    type: string
+                draft_id:
+                  type: string
+                rollback_timeout_seconds:
+                  type: integer
+                  default: 30
+      responses:
+        '202':
+          description: Aplicação iniciada, aguardando confirmação do operador
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  application_id:
+                    type: string
+                  results_per_server:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        server_id:
+                          type: string
+                        status:
+                          type: string
+                          enum: [pending_confirm, failed]
+                        message:
+                          type: string
+
+  /rules/batch/confirm:
+    post:
+      tags: [Rules & Chains]
+      summary: Confirmar permanência das regras aplicadas antes da expiração do rollback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [application_id]
+              properties:
+                application_id:
+                  type: string
+      responses:
+        '200':
+          description: Regras confirmadas permanentemente
+
+  /servers/{id}/ipsets:
+    get:
+      tags: [IPSets]
+      summary: Listar todos os IPSets do servidor
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/IPSetItem'
+    post:
+      tags: [IPSets]
+      summary: Criar novo IPSet
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IPSetCreateInput'
+      responses:
+        '201':
+          description: IPSet criado
+
+  /servers/{id}/ipsets/{name}/entries:
+    post:
+      tags: [IPSets]
+      summary: Adicionar entradas a um IPSet (suporte a lote, texto ou CSV)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                entries:
+                  type: array
+                  items:
+                    type: string
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Entradas adicionadas via swap atômico
+
+  /servers/{id}/backups:
+    get:
+      tags: [Backups]
+      summary: Listar backups do servidor
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BackupItem'
+    post:
+      tags: [Backups]
+      summary: Criar backup pontual imediato
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                description:
+                  type: string
+      responses:
+        '201':
+          description: Backup gerado com sucesso
+
+  /servers/{id}/backups/{backup_id}/restore:
+    post:
+      tags: [Backups]
+      summary: Restaurar backup com preview de diff e rollback de segurança
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: backup_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '202':
+          description: Restauração iniciada com confirmação pendente
+
+  /metrics/servers/{id}/realtime:
+    get:
+      tags: [Metrics]
+      summary: Stream Server-Sent Events (SSE) ou WebSocket para métricas em tempo real
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Stream de estatísticas de pacotes e bytes
+
+  /audit/logs:
+    get:
+      tags: [Audit]
+      summary: Consultar trilha de auditoria imutável com filtros
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: actor
+          in: query
+          schema:
+            type: string
+        - name: server_id
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditLogEntry'
+
+components:
+  schemas:
+    UserProfile:
+      type: object
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        display_name:
+          type: string
+        role:
+          type: string
+          enum: [admin, operator, viewer]
+        allowed_tags:
+          type: array
+          items:
+            type: string
+
+    ServerItem:
+      type: object
+      properties:
+        id:
+          type: string
+        hostname:
+          type: string
+        ip_address:
+          type: string
+        status:
+          type: string
+          enum: [online, offline, drift, applying]
+        group_name:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        agent_version:
+          type: string
+        iptables_backend:
+          type: string
+        last_seen_at:
+          type: string
+          format: date-time
+
+    ServerDetail:
+      allOf:
+        - $ref: '#/components/schemas/ServerItem'
+        - type: object
+          properties:
+            os_distro:
+              type: string
+            kernel_version:
+              type: string
+            ipv6_supported:
+              type: boolean
+            drift_detected:
+              type: boolean
+
+    FirewallRuleInput:
+      type: object
+      required: [table_name, chain_name, target]
+      properties:
+        table_name:
+          type: string
+          enum: [filter, nat, mangle, raw, security]
+        chain_name:
+          type: string
+        position:
+          type: integer
+        protocol:
+          type: string
+          enum: [tcp, udp, icmp, all]
+        src_ip:
+          type: string
+        dst_ip:
+          type: string
+        src_ports:
+          type: string
+        dst_ports:
+          type: string
+        in_interface:
+          type: string
+        out_interface:
+          type: string
+        state_match:
+          type: string
+        tcp_flags:
+          type: string
+        match_set_name:
+          type: string
+        match_set_direction:
+          type: string
+        target:
+          type: string
+          enum: [ACCEPT, DROP, REJECT, LOG, RETURN, DNAT, SNAT, MASQUERADE]
+        comment:
+          type: string
+
+    BatchPreviewResponse:
+      type: object
+      properties:
+        has_risks:
+          type: boolean
+        risk_warnings:
+          type: array
+          items:
+            type: string
+        diffs_per_server:
+          type: array
+          items:
+            type: object
+            properties:
+              server_id:
+                type: string
+              hostname:
+                type: string
+              unified_diff:
+                type: string
+
+    IPSetItem:
+      type: object
+      properties:
+        name:
+          type: string
+        type_name:
+          type: string
+        family:
+          type: string
+        elements_count:
+          type: integer
+        memory_size_bytes:
+          type: integer
+
+    IPSetCreateInput:
+      type: object
+      required: [name, type_name]
+      properties:
+        name:
+          type: string
+        type_name:
+          type: string
+          enum: [hash:ip, hash:net, hash:ip,port, list:set]
+        family:
+          type: string
+          enum: [inet, inet6]
+        maxelem:
+          type: integer
+          default: 65536
+
+    BackupItem:
+      type: object
+      properties:
+        id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        backup_type:
+          type: string
+        description:
+          type: string
+        checksum_sha256:
+          type: string
+
+    AuditLogEntry:
+      type: object
+      properties:
+        id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        actor_username:
+          type: string
+        ip_address:
+          type: string
+        action:
+          type: string
+        target_servers:
+          type: array
+          items:
+            type: string
+        result:
+          type: string
+        details:
+          type: string

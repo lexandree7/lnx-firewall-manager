@@ -1,0 +1,21 @@
+# Binários e builds
+bin/
+dist/
+web/dist/
+node_modules/
+
+# Bancos de dados e dados locais de teste
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Certificados de runtime locais gerados em testes
+certs_data/
+agent_certs/
+agent_state/
+agent_config.json
+
+# Logs e arquivos temporários
+*.log
+/tmp/

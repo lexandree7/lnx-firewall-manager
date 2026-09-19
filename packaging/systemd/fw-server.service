@@ -1,0 +1,25 @@
+[Unit]
+Description=Linux Firewall Manager Control Server (fw-server)
+Documentation=https://github.com/alexandre/lnx-firewall-manager
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lfm
+Group=lfm
+ExecStart=/usr/bin/fw-server -listen :8443 -db /var/lib/fw-server/lfm.db -certs-dir /var/lib/fw-server/certs -web-dir /usr/share/fw-server/web
+Restart=on-failure
+RestartSec=5s
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/fw-server
+PrivateTmp=true
+
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

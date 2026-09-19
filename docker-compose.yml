@@ -1,0 +1,17 @@
+services:
+  fw-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: fw-server
+    restart: unless-stopped
+    ports:
+      - "8443:8443"
+    environment:
+      - LFM_ROOT_PASSWORD=admin
+    volumes:
+      - lfm-data:/var/lib/fw-server
+
+volumes:
+  lfm-data:
+    driver: local

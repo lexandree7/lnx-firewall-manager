@@ -1,0 +1,30 @@
+name: "fw-agent"
+arch: "amd64"
+platform: "linux"
+version: "1.0.0"
+section: "admin"
+priority: "optional"
+maintainer: "Linux Firewall Manager Team <support@example.com>"
+description: |
+  Linux Firewall Manager Managed Agent.
+  Lightweight netfilter/iptables control daemon with lockout rollback protection.
+vendor: "LFM"
+homepage: "https://github.com/alexandre/lnx-firewall-manager"
+license: "MIT"
+
+depends:
+  - iptables
+  - ipset
+
+contents:
+  - src: ./bin/fw-agent
+    dst: /usr/bin/fw-agent
+    file_info:
+      mode: 0755
+  - src: ./packaging/systemd/fw-agent.service
+    dst: /lib/systemd/system/fw-agent.service
+    file_info:
+      mode: 0644
+
+scripts:
+  postinstall: ./packaging/scripts/postinstall-agent.sh

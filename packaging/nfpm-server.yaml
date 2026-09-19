@@ -1,0 +1,29 @@
+name: "fw-server"
+arch: "amd64"
+platform: "linux"
+version: "1.0.0"
+section: "admin"
+priority: "optional"
+maintainer: "Linux Firewall Manager Team <support@example.com>"
+description: |
+  Linux Firewall Manager Control Server.
+  Centralized web interface, REST API and agent hub.
+vendor: "LFM"
+homepage: "https://github.com/alexandre/lnx-firewall-manager"
+license: "MIT"
+
+contents:
+  - src: ./bin/fw-server
+    dst: /usr/bin/fw-server
+    file_info:
+      mode: 0755
+  - src: ./packaging/systemd/fw-server.service
+    dst: /lib/systemd/system/fw-server.service
+    file_info:
+      mode: 0644
+  - src: ./web/dist/
+    dst: /usr/share/fw-server/web/
+    type: "tree"
+
+scripts:
+  postinstall: ./packaging/scripts/postinstall-server.sh
