@@ -174,3 +174,51 @@ type RuleCounterSample struct {
 	RatePPS      float64 `json:"rate_pps"`
 	RateBPS      float64 `json:"rate_bps"`
 }
+
+// UserSession representa uma sessão ativa autenticada
+type UserSession struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	IPAddress string    `json:"ip_address"`
+	UserAgent string    `json:"user_agent"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// OIDCConfig armazena os parâmetros de autenticação federada OpenID Connect
+type OIDCConfig struct {
+	Enabled      bool      `json:"enabled"`
+	ProviderName string    `json:"provider_name"`
+	IssuerURL    string    `json:"issuer_url"`
+	ClientID     string    `json:"client_id"`
+	ClientSecret string    `json:"client_secret,omitempty"`
+	RedirectURL  string    `json:"redirect_url"`
+	Scopes       string    `json:"scopes"`
+	DefaultRole  string    `json:"default_role"` // "admin" ou "viewer"
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// PasswordChangeRequest payload para alteração de senha
+type PasswordChangeRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+// TOTPSetupResponse dados retornados na iniciação da configuração 2FA
+type TOTPSetupResponse struct {
+	Secret      string `json:"secret"`
+	OTPAuthURL  string `json:"otpauth_url"`
+	Issuer      string `json:"issuer"`
+	AccountName string `json:"account_name"`
+}
+
+// TOTPEnableRequest payload para confirmar e ativar o 2FA
+type TOTPEnableRequest struct {
+	Secret string `json:"secret"`
+	Code   string `json:"code"`
+}
+
+// TOTPDisableRequest payload para desativar o 2FA com senha
+type TOTPDisableRequest struct {
+	Password string `json:"password"`
+}

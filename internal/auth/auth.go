@@ -7,10 +7,14 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base32"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -240,3 +244,209 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+// ChangeUserPassword valida e atualiza a senha de um usuário local
+func (a *AuthManager) ChangeUserPassword(userID, currentPassword, newPassword string) error {
+	if len(newPassword) < 6 {
+		return fmt.Errorf("a nova senha deve possuir no mínimo 6 caracteres")
+	}
+
+	user, err := a.db.GetUserByID(userID)
+	if err != nil {
+		return fmt.Errorf("usuário não encontrado: %v", err)
+	}
+
+	if user.PasswordHash != "" {
+		if !a.VerifyPassword(currentPassword, user.PasswordHash) {
+			return fmt.Errorf("senha atual incorreta")
+		}
+	}
+
+	newHash, err := a.HashPassword(newPassword)
+	if err != nil {
+		return fmt.Errorf("erro ao gerar hash da nova senha: %v", err)
+	}
+
+	return a.db.UpdateUserPassword(userID, newHash)
+}
+
+// SetupTOTP gera um segredo Base32 para o usuário
+func (a *AuthManager) SetupTOTP(userID string) (*models.TOTPSetupResponse, error) {
+	user, err := a.db.GetUserByID(userID)
+	if err != nil {
+		return nil, fmt.Errorf("usuário não encontrado: %v", err)
+	}
+
+	secret := a.GenerateTOTPSecret()
+	account := user.Username
+	issuer := "LFM"
+	otpAuthURL := fmt.Sprintf("otpauth://totp/%s:%s?secret=%s&issuer=%s", issuer, account, secret, issuer)
+
+	return &models.TOTPSetupResponse{
+		Secret:      secret,
+		OTPAuthURL:  otpAuthURL,
+		Issuer:      issuer,
+		AccountName: account,
+	}, nil
+}
+
+// EnableTOTP valida o código com o segredo e ativa o 2FA
+func (a *AuthManager) EnableTOTP(userID, secret, code string) error {
+	if !a.ValidateTOTP(secret, code) {
+		return fmt.Errorf("código TOTP de 6 dígitos inválido")
+	}
+	return a.db.UpdateUserTOTP(userID, secret, true)
+}
+
+// DisableTOTP valida a senha do usuário e desativa o 2FA
+func (a *AuthManager) DisableTOTP(userID, password string) error {
+	user, err := a.db.GetUserByID(userID)
+	if err != nil {
+		return fmt.Errorf("usuário não encontrado: %v", err)
+	}
+
+	if user.PasswordHash != "" && !a.VerifyPassword(password, user.PasswordHash) {
+		return fmt.Errorf("senha incorreta para confirmação")
+	}
+
+	return a.db.UpdateUserTOTP(userID, "", false)
+}
+
+// OIDCDiscoveryDoc armazena os endpoints descobertos no IdP
+type OIDCDiscoveryDoc struct {
+	Issuer                string `json:"issuer"`
+	AuthorizationEndpoint string `json:"authorization_endpoint"`
+	TokenEndpoint         string `json:"token_endpoint"`
+	UserinfoEndpoint      string `json:"userinfo_endpoint"`
+	EndSessionEndpoint    string `json:"end_session_endpoint"`
+}
+
+// OIDCUserInfo armazena os dados do usuário extraídos do token/userinfo
+type OIDCUserInfo struct {
+	Subject           string `json:"sub"`
+	PreferredUsername string `json:"preferred_username"`
+	Email             string `json:"email"`
+	Name              string `json:"name"`
+}
+
+// FetchOIDCDiscovery consulta o endpoint .well-known/openid-configuration
+func FetchOIDCDiscovery(issuerURL string) (*OIDCDiscoveryDoc, error) {
+	cleanURL := strings.TrimSuffix(issuerURL, "/")
+	wellKnown := cleanURL + "/.well-known/openid-configuration"
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(wellKnown)
+	if err != nil {
+		return nil, fmt.Errorf("falha ao conectar ao provedor OIDC: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("provedor OIDC retornou status HTTP %d", resp.StatusCode)
+	}
+
+	var doc OIDCDiscoveryDoc
+	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+		return nil, fmt.Errorf("falha ao interpretar JSON de descoberta: %v", err)
+	}
+
+	if doc.AuthorizationEndpoint == "" || doc.TokenEndpoint == "" {
+		return nil, fmt.Errorf("documento de descoberta OIDC não contém endpoints obrigatórios")
+	}
+
+	return &doc, nil
+}
+
+// BuildOIDCAuthURL constrói a URL de redirecionamento para login no IdP
+func BuildOIDCAuthURL(doc *OIDCDiscoveryDoc, clientID, redirectURL, scopes, state, nonce string) string {
+	if scopes == "" {
+		scopes = "openid profile email"
+	}
+	params := url.Values{}
+	params.Set("response_type", "code")
+	params.Set("client_id", clientID)
+	params.Set("redirect_uri", redirectURL)
+	params.Set("scope", scopes)
+	params.Set("state", state)
+	params.Set("nonce", nonce)
+
+	separator := "?"
+	if strings.Contains(doc.AuthorizationEndpoint, "?") {
+		separator = "&"
+	}
+	return doc.AuthorizationEndpoint + separator + params.Encode()
+}
+
+// ExchangeOIDCCode troca o código de autorização por tokens e dados do usuário
+func ExchangeOIDCCode(doc *OIDCDiscoveryDoc, clientID, clientSecret, redirectURL, code string) (*OIDCUserInfo, error) {
+	data := url.Values{}
+	data.Set("grant_type", "authorization_code")
+	data.Set("code", code)
+	data.Set("redirect_uri", redirectURL)
+	data.Set("client_id", clientID)
+	data.Set("client_secret", clientSecret)
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	req, err := http.NewRequest("POST", doc.TokenEndpoint, strings.NewReader(data.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(clientID, clientSecret)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("falha na requisição ao token_endpoint: %v", err)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("erro no token_endpoint (HTTP %d): %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var tokenRes struct {
+		AccessToken string `json:"access_token"`
+		IDToken     string `json:"id_token"`
+		TokenType   string `json:"token_type"`
+	}
+	if err := json.Unmarshal(bodyBytes, &tokenRes); err != nil {
+		return nil, fmt.Errorf("falha ao interpretar tokens OIDC: %v", err)
+	}
+
+	userInfo := &OIDCUserInfo{}
+
+	// Tenta extrair claims básicas do id_token (JWT payload)
+	if tokenRes.IDToken != "" {
+		parts := strings.Split(tokenRes.IDToken, ".")
+		if len(parts) >= 2 {
+			payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+			if err == nil {
+				_ = json.Unmarshal(payloadBytes, userInfo)
+			}
+		}
+	}
+
+	// Se não veio userinfo completo ou se houver userinfo_endpoint, consulta para garantir
+	if (userInfo.PreferredUsername == "" || userInfo.Email == "") && doc.UserinfoEndpoint != "" && tokenRes.AccessToken != "" {
+		uReq, _ := http.NewRequest("GET", doc.UserinfoEndpoint, nil)
+		uReq.Header.Set("Authorization", "Bearer "+tokenRes.AccessToken)
+		if uResp, err := client.Do(uReq); err == nil && uResp.StatusCode == http.StatusOK {
+			defer uResp.Body.Close()
+			_ = json.NewDecoder(uResp.Body).Decode(userInfo)
+		}
+	}
+
+	if userInfo.PreferredUsername == "" {
+		if userInfo.Email != "" {
+			userInfo.PreferredUsername = strings.Split(userInfo.Email, "@")[0]
+		} else if userInfo.Subject != "" {
+			userInfo.PreferredUsername = userInfo.Subject
+		} else {
+			return nil, fmt.Errorf("não foi possível identificar o username nas claims do OIDC")
+		}
+	}
+
+	return userInfo, nil
+}
+

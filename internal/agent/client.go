@@ -68,11 +68,21 @@ func (c *AgentClient) writeJSON(v interface{}) error {
 }
 
 func (c *AgentClient) onRollbackExecuted(changeID, reason string) {
+	v4, _ := c.executor.DumpIptables(false)
+	v6, _ := c.executor.DumpIptables(true)
+	var hash string
+	if rs, err := parser.ParseIptablesSave(v4); err == nil && rs != nil {
+		hash = rs.CanonicalHash()
+		c.lastAppliedHash = hash
+	}
 	msg := map[string]interface{}{
-		"type":            "ROLLBACK_REPORT",
-		"server_id":       c.agentID,
-		"command_id":      changeID,
-		"rollback_reason": reason,
+		"type":             "ROLLBACK_REPORT",
+		"server_id":        c.agentID,
+		"command_id":       changeID,
+		"rollback_reason":  reason,
+		"current_rules_v4": v4,
+		"current_rules_v6": v6,
+		"rules_hash":       hash,
 	}
 	_ = c.writeJSON(msg)
 }
@@ -169,8 +179,9 @@ func (c *AgentClient) connectAndListen() error {
 		"os_distro":      sysInfo.OSDistro,
 		"kernel_version": sysInfo.KernelVersion,
 		"backend":        sysInfo.IptablesBackend,
-		"ipv6":           sysInfo.IPv6Supported,
-		"rules_hash":     rulesHash,
+		"ipv6":             sysInfo.IPv6Supported,
+		"rules_hash":       rulesHash,
+		"current_rules_v4": rawV4,
 	}
 
 	if err := c.writeJSON(hello); err != nil {
@@ -226,9 +237,10 @@ func (c *AgentClient) heartbeatLoop(done <-chan struct{}) {
 			}
 
 			hb := map[string]interface{}{
-				"type":       "HEARTBEAT",
-				"server_id":  c.agentID,
-				"rules_hash": hash,
+				"type":             "HEARTBEAT",
+				"server_id":        c.agentID,
+				"rules_hash":       hash,
+				"current_rules_v4": rawV4,
 			}
 			if err := c.writeJSON(hb); err != nil {
 				return
@@ -378,12 +390,25 @@ func (c *AgentClient) handleServerCommand(cmd map[string]interface{}) {
 		errMsg = errResult.Error()
 	}
 
+	dumpV4, _ := c.executor.DumpIptables(false)
+	dumpV6, _ := c.executor.DumpIptables(true)
+	var currentHash string
+	if rs, err := parser.ParseIptablesSave(dumpV4); err == nil && rs != nil {
+		currentHash = rs.CanonicalHash()
+		if success {
+			c.lastAppliedHash = currentHash
+		}
+	}
+
 	resp := map[string]interface{}{
-		"type":          "CMD_RESULT",
-		"command_id":    cmdID,
-		"server_id":     c.agentID,
-		"success":       success,
-		"error_message": errMsg,
+		"type":             "CMD_RESULT",
+		"command_id":       cmdID,
+		"server_id":        c.agentID,
+		"success":          success,
+		"error_message":    errMsg,
+		"current_rules_v4": dumpV4,
+		"current_rules_v6": dumpV6,
+		"rules_hash":       currentHash,
 	}
 	_ = c.writeJSON(resp)
 }

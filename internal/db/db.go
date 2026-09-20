@@ -228,6 +228,22 @@ func (d *DB) migrate() error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_logs(timestamp DESC);
+
+	CREATE TABLE IF NOT EXISTS oidc_config (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		enabled INTEGER NOT NULL DEFAULT 0,
+		provider_name TEXT NOT NULL DEFAULT 'OpenID Connect',
+		issuer_url TEXT NOT NULL DEFAULT '',
+		client_id TEXT NOT NULL DEFAULT '',
+		client_secret TEXT NOT NULL DEFAULT '',
+		redirect_url TEXT NOT NULL DEFAULT '',
+		scopes TEXT NOT NULL DEFAULT 'openid profile email',
+		default_role TEXT NOT NULL DEFAULT 'viewer',
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	INSERT OR IGNORE INTO oidc_config (id, enabled, provider_name, issuer_url, client_id, client_secret, redirect_url, scopes, default_role)
+	VALUES (1, 0, 'OpenID Connect', '', '', '', '', 'openid profile email', 'viewer');
 	`
 
 	_, err := d.db.Exec(schema)
@@ -341,6 +357,195 @@ func (d *DB) ValidateSessionToken(tokenHash string) (*models.User, error) {
 func (d *DB) InvalidateSession(tokenHash string) error {
 	_, err := d.db.Exec("DELETE FROM user_sessions WHERE session_token_hash = ?", tokenHash)
 	return err
+}
+
+// GetUserByID busca usuário pelo ID interno
+func (d *DB) GetUserByID(id string) (*models.User, error) {
+	row := d.db.QueryRow(`
+		SELECT id, username, display_name, email, auth_type, password_hash, totp_secret, totp_enabled,
+		       role, scoped_tags, scoped_groups, failed_login_attempts, locked_until, created_at, updated_at
+		FROM users WHERE id = ?
+	`, id)
+
+	var u models.User
+	var tagsJSON, groupsJSON, passHash, totpSec, email sql.NullString
+	var totpEn int
+	var locked sql.NullTime
+
+	err := row.Scan(
+		&u.ID, &u.Username, &u.DisplayName, &email, &u.AuthType, &passHash, &totpSec, &totpEn,
+		&u.Role, &tagsJSON, &groupsJSON, &u.FailedLoginAttempts, &locked, &u.CreatedAt, &u.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	u.Email = email.String
+	u.PasswordHash = passHash.String
+	u.TOTPSecret = totpSec.String
+	u.TOTPEnabled = totpEn == 1
+	if locked.Valid {
+		u.LockedUntil = &locked.Time
+	}
+	if tagsJSON.Valid && tagsJSON.String != "" {
+		_ = json.Unmarshal([]byte(tagsJSON.String), &u.ScopedTags)
+	}
+	if groupsJSON.Valid && groupsJSON.String != "" {
+		_ = json.Unmarshal([]byte(groupsJSON.String), &u.ScopedGroups)
+	}
+
+	return &u, nil
+}
+
+// UpdateUserPassword atualiza a hash da senha do usuário
+func (d *DB) UpdateUserPassword(userID, passwordHash string) error {
+	_, err := d.db.Exec(`
+		UPDATE users SET password_hash = ?, failed_login_attempts = 0, locked_until = NULL, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, passwordHash, userID)
+	return err
+}
+
+// UpdateUserTOTP atualiza o segredo e status do 2FA TOTP
+func (d *DB) UpdateUserTOTP(userID, secret string, enabled bool) error {
+	enVal := 0
+	if enabled {
+		enVal = 1
+	}
+	_, err := d.db.Exec(`
+		UPDATE users SET totp_secret = ?, totp_enabled = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, secret, enVal, userID)
+	return err
+}
+
+// ListUserSessions lista sessões ativas do usuário
+func (d *DB) ListUserSessions(userID string) ([]models.UserSession, error) {
+	rows, err := d.db.Query(`
+		SELECT id, user_id, ip_address, user_agent, expires_at, created_at
+		FROM user_sessions
+		WHERE user_id = ? AND expires_at > CURRENT_TIMESTAMP
+		ORDER BY created_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sessions []models.UserSession
+	for rows.Next() {
+		var s models.UserSession
+		var ua sql.NullString
+		if err := rows.Scan(&s.ID, &s.UserID, &s.IPAddress, &ua, &s.ExpiresAt, &s.CreatedAt); err != nil {
+			continue
+		}
+		s.UserAgent = ua.String
+		sessions = append(sessions, s)
+	}
+	return sessions, nil
+}
+
+// RevokeUserSession revoga uma sessão específica de um usuário
+func (d *DB) RevokeUserSession(sessionID, userID string) error {
+	_, err := d.db.Exec("DELETE FROM user_sessions WHERE id = ? AND user_id = ?", sessionID, userID)
+	return err
+}
+
+// GetOIDCConfig recupera os parâmetros OIDC do sistema
+func (d *DB) GetOIDCConfig() (*models.OIDCConfig, error) {
+	row := d.db.QueryRow(`
+		SELECT enabled, provider_name, issuer_url, client_id, client_secret, redirect_url, scopes, default_role, updated_at
+		FROM oidc_config WHERE id = 1
+	`)
+
+	var cfg models.OIDCConfig
+	var enabledInt int
+	err := row.Scan(
+		&enabledInt, &cfg.ProviderName, &cfg.IssuerURL, &cfg.ClientID,
+		&cfg.ClientSecret, &cfg.RedirectURL, &cfg.Scopes, &cfg.DefaultRole, &cfg.UpdatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return &models.OIDCConfig{
+				Enabled:      false,
+				ProviderName: "OpenID Connect",
+				Scopes:       "openid profile email",
+				DefaultRole:  "viewer",
+			}, nil
+		}
+		return nil, err
+	}
+	cfg.Enabled = enabledInt == 1
+	if cfg.DefaultRole != "admin" && cfg.DefaultRole != "viewer" {
+		cfg.DefaultRole = "viewer"
+	}
+	return &cfg, nil
+}
+
+// SaveOIDCConfig atualiza as configurações do provedor OIDC
+func (d *DB) SaveOIDCConfig(cfg *models.OIDCConfig) error {
+	enVal := 0
+	if cfg.Enabled {
+		enVal = 1
+	}
+	if cfg.DefaultRole != "admin" && cfg.DefaultRole != "viewer" {
+		cfg.DefaultRole = "viewer"
+	}
+	if cfg.Scopes == "" {
+		cfg.Scopes = "openid profile email"
+	}
+
+	_, err := d.db.Exec(`
+		UPDATE oidc_config SET
+			enabled = ?,
+			provider_name = ?,
+			issuer_url = ?,
+			client_id = ?,
+			client_secret = CASE WHEN ? != '' THEN ? ELSE client_secret END,
+			redirect_url = ?,
+			scopes = ?,
+			default_role = ?,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = 1
+	`, enVal, cfg.ProviderName, cfg.IssuerURL, cfg.ClientID, cfg.ClientSecret, cfg.ClientSecret, cfg.RedirectURL, cfg.Scopes, cfg.DefaultRole)
+	return err
+}
+
+// UpsertFederatedUser provisiona ou atualiza um usuário autenticado via OIDC
+func (d *DB) UpsertFederatedUser(username, displayName, email, role string) (*models.User, error) {
+	if role != "admin" && role != "viewer" {
+		role = "viewer"
+	}
+	if username == "" {
+		return nil, fmt.Errorf("username não pode ser vazio")
+	}
+
+	existing, err := d.GetUserByUsername(username)
+	if err == nil && existing != nil {
+		// Atualiza dados
+		_, err = d.db.Exec(`
+			UPDATE users SET display_name = ?, email = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+		`, displayName, email, existing.ID)
+		if err != nil {
+			return nil, err
+		}
+		existing.DisplayName = displayName
+		existing.Email = email
+		return existing, nil
+	}
+
+	// Cria novo usuário federado
+	id := fmt.Sprintf("usr_oidc_%d", time.Now().UnixNano())
+	_, err = d.db.Exec(`
+		INSERT INTO users (id, username, display_name, email, auth_type, role, created_at, updated_at)
+		VALUES (?, ?, ?, ?, 'oidc', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`, id, username, displayName, email, role)
+	if err != nil {
+		return nil, err
+	}
+
+	return d.GetUserByUsername(username)
 }
 
 // CreateEnrollmentToken persiste um token de enrollment
@@ -620,3 +825,185 @@ func (d *DB) GetBackupByID(backupID string) (*models.FirewallBackup, error) {
 	b.CreatedBy = author.String
 	return &b, nil
 }
+
+// ListIPSets lista conjuntos ipset de um servidor
+func (d *DB) ListIPSets(serverID string) ([]*models.IPSet, error) {
+	rows, err := d.db.Query(`
+		SELECT id, server_id, name, type_name, family, maxelem, timeout_sec, comment_enabled, counters_enabled, memory_size_bytes, elements_count, created_at, updated_at
+		FROM ipsets
+		WHERE server_id = ? OR server_id = 'global'
+		ORDER BY name ASC
+	`, serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sets []*models.IPSet
+	for rows.Next() {
+		var s models.IPSet
+		var comment, counters int
+		if err := rows.Scan(&s.ID, &s.ServerID, &s.Name, &s.TypeName, &s.Family, &s.MaxElem, &s.TimeoutSec, &comment, &counters, &s.MemorySizeBytes, &s.ElementsCount, &s.CreatedAt, &s.UpdatedAt); err != nil {
+			return nil, err
+		}
+		s.CommentEnabled = comment == 1
+		s.CountersEnabled = counters == 1
+		sets = append(sets, &s)
+	}
+	return sets, nil
+}
+
+// UpsertIPSet insere ou atualiza um conjunto ipset
+func (d *DB) UpsertIPSet(s *models.IPSet) error {
+	commentVal := 0
+	if s.CommentEnabled {
+		commentVal = 1
+	}
+	countersVal := 0
+	if s.CountersEnabled {
+		countersVal = 1
+	}
+	_, err := d.db.Exec(`
+		INSERT INTO ipsets (id, server_id, name, type_name, family, maxelem, timeout_sec, comment_enabled, counters_enabled, memory_size_bytes, elements_count, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(server_id, name) DO UPDATE SET
+			type_name = excluded.type_name,
+			family = excluded.family,
+			elements_count = excluded.elements_count,
+			updated_at = CURRENT_TIMESTAMP
+	`, s.ID, s.ServerID, s.Name, s.TypeName, s.Family, s.MaxElem, s.TimeoutSec, commentVal, countersVal, s.MemorySizeBytes, s.ElementsCount)
+	return err
+}
+
+// GetIPSet busca um conjunto ipset por serverID e nome
+func (d *DB) GetIPSet(serverID, name string) (*models.IPSet, error) {
+	row := d.db.QueryRow(`
+		SELECT id, server_id, name, type_name, family, maxelem, timeout_sec, comment_enabled, counters_enabled, memory_size_bytes, elements_count, created_at, updated_at
+		FROM ipsets
+		WHERE (server_id = ? OR server_id = 'global') AND name = ?
+		LIMIT 1
+	`, serverID, name)
+
+	var s models.IPSet
+	var comment, counters int
+	if err := row.Scan(&s.ID, &s.ServerID, &s.Name, &s.TypeName, &s.Family, &s.MaxElem, &s.TimeoutSec, &comment, &counters, &s.MemorySizeBytes, &s.ElementsCount, &s.CreatedAt, &s.UpdatedAt); err != nil {
+		return nil, err
+	}
+	s.CommentEnabled = comment == 1
+	s.CountersEnabled = counters == 1
+	return &s, nil
+}
+
+// GetIPSetEntries retorna todas as entradas registradas para um ipset
+func (d *DB) GetIPSetEntries(ipsetID string) ([]string, error) {
+	rows, err := d.db.Query(`
+		SELECT entry_value
+		FROM ipset_entries
+		WHERE ipset_id = ?
+		ORDER BY created_at ASC, id ASC
+	`, ipsetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []string
+	for rows.Next() {
+		var val string
+		if err := rows.Scan(&val); err == nil {
+			entries = append(entries, val)
+		}
+	}
+	if entries == nil {
+		entries = []string{}
+	}
+	return entries, nil
+}
+
+// SaveIPSetEntries substitui a lista de entradas de um ipset atomicamente no banco
+func (d *DB) SaveIPSetEntries(ipsetID string, entries []string) error {
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec("DELETE FROM ipset_entries WHERE ipset_id = ?", ipsetID); err != nil {
+		return err
+	}
+
+	stmt, err := tx.Prepare("INSERT OR IGNORE INTO ipset_entries (id, ipset_id, entry_value) VALUES (?, ?, ?)")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for i, entry := range entries {
+		val := strings.TrimSpace(entry)
+		if val == "" {
+			continue
+		}
+		id := fmt.Sprintf("ent_%s_%d", ipsetID, i)
+		if _, err := stmt.Exec(id, ipsetID, val); err != nil {
+			return err
+		}
+	}
+
+	// Atualiza contagem no conjunto ipset
+	if _, err := tx.Exec("UPDATE ipsets SET elements_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", len(entries), ipsetID); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// FindRulesUsingIPSet busca regras no banco que utilizam um determinado conjunto IPSet
+func (d *DB) FindRulesUsingIPSet(serverID, setName string) ([]*models.FirewallRule, error) {
+	query := `
+		SELECT id, chain_id, server_id, table_name, chain_name, ip_version, position, protocol, target, match_set_name, raw_rule_text
+		FROM firewall_rules
+		WHERE (server_id = ? OR server_id = 'global')
+		  AND (match_set_name = ? OR raw_rule_text LIKE '%' || ? || '%')
+	`
+	rows, err := d.db.Query(query, serverID, setName, "--match-set "+setName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var rules []*models.FirewallRule
+	for rows.Next() {
+		var r models.FirewallRule
+		var matchSet, rawText sql.NullString
+		if err := rows.Scan(&r.ID, &r.ChainID, &r.ServerID, &r.TableName, &r.ChainName, &r.IPVersion, &r.Position, &r.Protocol, &r.Target, &matchSet, &rawText); err != nil {
+			return nil, err
+		}
+		if matchSet.Valid {
+			r.MatchSetName = matchSet.String
+		}
+		if rawText.Valid {
+			r.RawRuleText = rawText.String
+		}
+		rules = append(rules, &r)
+	}
+	return rules, nil
+}
+
+// DeleteIPSet remove um conjunto ipset e suas entradas do banco
+func (d *DB) DeleteIPSet(serverID, name string) error {
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var setID string
+	err = tx.QueryRow("SELECT id FROM ipsets WHERE (server_id = ? OR server_id = 'global') AND name = ?", serverID, name).Scan(&setID)
+	if err == nil && setID != "" {
+		_, _ = tx.Exec("DELETE FROM ipset_entries WHERE ipset_id = ?", setID)
+		_, _ = tx.Exec("DELETE FROM ipsets WHERE id = ?", setID)
+	}
+
+	return tx.Commit()
+}
+

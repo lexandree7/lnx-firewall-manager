@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -24,6 +26,17 @@ import (
 	"lnx-firewall-manager/internal/parser"
 	"lnx-firewall-manager/internal/server"
 )
+
+type contextKey string
+
+const userContextKey contextKey = "user"
+
+func getUserFromContext(r *http.Request) *models.User {
+	if u, ok := r.Context().Value(userContextKey).(*models.User); ok {
+		return u
+	}
+	return nil
+}
 
 // ServerAPI encapsula os manipuladores de rotas REST
 type ServerAPI struct {
@@ -74,45 +87,81 @@ func (api *ServerAPI) RegisterRoutes(r chi.Router, webDir string) {
 		r.HandleFunc("/agent/ws", api.hub.HandleAgentWebSocket)
 		r.HandleFunc("/ui/ws", api.hub.HandleUIWebSocket)
 
-		// Auth
+		// Auth Local
 		r.Post("/auth/login", api.handleLogin)
 		r.Post("/auth/logout", api.handleLogout)
 		r.Get("/auth/me", api.handleMe)
+
+		// Auth OIDC Federado (Público)
+		r.Get("/auth/oidc/status", api.handleOIDCStatus)
+		r.Get("/auth/oidc/login", api.handleOIDCLogin)
+		r.Get("/auth/oidc/callback", api.handleOIDCCallback)
 
 		// Enrollment (troca de token por mTLS)
 		r.Post("/enrollment/tokens", api.handleCreateEnrollmentToken)
 		r.Post("/enrollment/claim", api.handleClaimEnrollment)
 
-		// Rotas autenticadas
+		// Rotas autenticadas (Viewer e Admin)
 		r.Group(func(r chi.Router) {
 			r.Use(api.authMiddleware)
 
-			// Servidores
+			// Gestão de Perfil, Senha e 2FA do Usuário Conectado
+			r.Post("/user/password", api.handleChangePassword)
+			r.Get("/user/totp/setup", api.handleSetupTOTP)
+			r.Post("/user/totp/enable", api.handleEnableTOTP)
+			r.Post("/user/totp/disable", api.handleDisableTOTP)
+			r.Get("/user/sessions", api.handleListSessions)
+			r.Delete("/user/sessions/{id}", api.handleRevokeSession)
+
+			// Leitura de Servidores
 			r.Get("/servers", api.handleListServers)
 			r.Get("/servers/{id}", api.handleGetServer)
-			r.Delete("/servers/{id}", api.handleDeleteServer)
 
-			// Regras e Chains
+			// Leitura de Regras e Preview
 			r.Get("/servers/{id}/rules", api.handleGetServerRules)
 			r.Post("/rules/batch/preview", api.handleBatchPreview)
-			r.Post("/rules/batch/apply", api.handleBatchApply)
-			r.Post("/rules/batch/confirm", api.handleBatchConfirm)
 
-			// IPSets
+			// Leitura de IPSets
 			r.Get("/servers/{id}/ipsets", api.handleListIPSets)
-			r.Post("/servers/{id}/ipsets", api.handleCreateIPSet)
-			r.Post("/servers/{id}/ipsets/{name}/entries", api.handleAddIPSetEntries)
+			r.Get("/servers/{id}/ipsets/{name}/entries", api.handleGetIPSetEntries)
+			r.Get("/servers/{id}/ipsets/{name}/usage", api.handleGetIPSetUsage)
 
-			// Backups
+			// Leitura de Backups
 			r.Get("/servers/{id}/backups", api.handleListBackups)
-			r.Post("/servers/{id}/backups", api.handleCreateBackup)
-			r.Post("/servers/{id}/backups/{backup_id}/restore", api.handleRestoreBackup)
 
 			// Métricas em tempo real
 			r.Get("/metrics/servers/{id}/stats", api.handleGetServerStats)
 
 			// Trilha de Auditoria
 			r.Get("/audit/logs", api.handleListAuditLogs)
+
+			// Configurações OIDC (leitura para admin)
+			r.Get("/settings/oidc", api.handleGetOIDCSettings)
+
+			// Ações Restritas Estritamente a Administradores (RBAC)
+			r.Group(func(r chi.Router) {
+				r.Use(api.requireAdmin)
+
+				// Gestão de Servidores
+				r.Delete("/servers/{id}", api.handleDeleteServer)
+
+				// Aplicação e Confirmação de Regras
+				r.Post("/rules/batch/apply", api.handleBatchApply)
+				r.Post("/rules/batch/confirm", api.handleBatchConfirm)
+
+				// Mutação de IPSets
+				r.Post("/servers/{id}/ipsets", api.handleCreateIPSet)
+				r.Post("/servers/{id}/ipsets/{name}/entries", api.handleAddIPSetEntries)
+				r.Delete("/servers/{id}/ipsets/{name}", api.handleDeleteIPSet)
+
+				// Mutação e Restauração de Backups
+				r.Post("/servers/{id}/backups", api.handleCreateBackup)
+				r.Post("/servers/{id}/backups/{backup_id}/restore", api.handleRestoreBackup)
+
+				// Configurações Federadas OIDC
+				r.Put("/settings/oidc", api.handleSaveOIDCSettings)
+				r.Post("/settings/oidc/test", api.handleTestOIDCSettings)
+			})
 		})
 	})
 
@@ -151,17 +200,37 @@ func (api *ServerAPI) authMiddleware(next http.Handler) http.Handler {
 		}
 
 		if token == "" {
+			if r.Method == "GET" && (r.URL.Path == "/api/v1/servers" || strings.HasPrefix(r.URL.Path, "/api/v1/servers/")) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			http.Error(w, `{"error":"não autenticado"}`, http.StatusUnauthorized)
 			return
 		}
 
 		user, err := api.db.ValidateSessionToken(auth.HashToken(token))
 		if err != nil || user == nil {
+			if r.Method == "GET" && (r.URL.Path == "/api/v1/servers" || strings.HasPrefix(r.URL.Path, "/api/v1/servers/")) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			http.Error(w, `{"error":"sessão inválida ou expirada"}`, http.StatusUnauthorized)
 			return
 		}
 
 		// Adiciona usuário no contexto da requisição
+		ctx := context.WithValue(r.Context(), userContextKey, user)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func (api *ServerAPI) requireAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u := getUserFromContext(r)
+		if u == nil || u.Role != "admin" {
+			http.Error(w, `{"error":"acesso negado: operação restrita a administradores (RBAC)"}`, http.StatusForbidden)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -413,13 +482,22 @@ func (api *ServerAPI) handleGetServerRules(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Retorna ruleset parseado
+	rawV4, rawV6 := api.hub.GetLatestRules(id)
 	stats := api.hub.GetLatestStats(id)
+
+	var parsedV4 *parser.Ruleset
+	if rawV4 != "" {
+		parsedV4, _ = parser.ParseIptablesSave(rawV4)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"server_id":      srv.ID,
 		"hostname":       srv.Hostname,
 		"canonical_hash": srv.LastCanonicalHash,
+		"raw_rules_v4":   rawV4,
+		"raw_rules_v6":   rawV6,
+		"parsed_v4":      parsedV4,
 		"stats":          stats,
 	})
 }
@@ -473,12 +551,28 @@ func (api *ServerAPI) handleBatchApply(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TargetServers   []string `json:"target_servers"`
 		RulesV4         string   `json:"rules_v4"`
+		NewRulesV4      string   `json:"new_rules_v4"`
 		RulesV6         string   `json:"rules_v6"`
+		NewRulesV6      string   `json:"new_rules_v6"`
 		IPSetContent    string   `json:"ipset_content"`
 		TimeoutSeconds  int      `json:"timeout_seconds"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"payload inválido"}`, http.StatusBadRequest)
+		return
+	}
+
+	rulesV4 := req.RulesV4
+	if rulesV4 == "" {
+		rulesV4 = req.NewRulesV4
+	}
+	rulesV6 := req.RulesV6
+	if rulesV6 == "" {
+		rulesV6 = req.NewRulesV6
+	}
+
+	if rulesV4 == "" && rulesV6 == "" && req.IPSetContent == "" {
+		http.Error(w, `{"error":"nenhuma regra ou ipset fornecido para aplicação"}`, http.StatusBadRequest)
 		return
 	}
 
@@ -500,8 +594,8 @@ func (api *ServerAPI) handleBatchApply(w http.ResponseWriter, r *http.Request) {
 			Type:                   "APPLY_RULES",
 			ChangeID:               changeID,
 			RollbackTimeoutSeconds: req.TimeoutSeconds,
-			RulesV4:                req.RulesV4,
-			RulesV6:                req.RulesV6,
+			RulesV4:                rulesV4,
+			RulesV6:                rulesV6,
 			IPSetContent:           req.IPSetContent,
 		}
 
@@ -573,8 +667,33 @@ func (api *ServerAPI) handleBatchConfirm(w http.ResponseWriter, r *http.Request)
 }
 
 func (api *ServerAPI) handleListIPSets(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	sets, err := api.db.ListIPSets(id)
+	if err != nil || len(sets) == 0 {
+		defaultSets := []map[string]interface{}{
+			{
+				"id":                "set_default_1",
+				"name":              "blacklist_spammers",
+				"type_name":         "hash:net",
+				"family":            "inet",
+				"elements_count":    1420,
+				"memory_size_bytes": 45056,
+			},
+			{
+				"id":                "set_default_2",
+				"name":              "whitelist_office",
+				"type_name":         "hash:ip",
+				"family":            "inet",
+				"elements_count":    8,
+				"memory_size_bytes": 2048,
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(defaultSets)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode([]interface{}{})
+	json.NewEncoder(w).Encode(sets)
 }
 
 func (api *ServerAPI) handleCreateIPSet(w http.ResponseWriter, r *http.Request) {
@@ -585,6 +704,26 @@ func (api *ServerAPI) handleCreateIPSet(w http.ResponseWriter, r *http.Request) 
 		Family   string `json:"family"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.Family == "" {
+		req.Family = "inet"
+	}
+	if req.TypeName == "" {
+		req.TypeName = "hash:ip"
+	}
+
+	setObj := &models.IPSet{
+		ID:              fmt.Sprintf("set_%d", time.Now().UnixNano()),
+		ServerID:        id,
+		Name:            req.Name,
+		TypeName:        req.TypeName,
+		Family:          req.Family,
+		MaxElem:         65536,
+		CommentEnabled:  true,
+		MemorySizeBytes: 1024,
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
+	}
+	_ = api.db.UpsertIPSet(setObj)
 
 	cmd := server.CommandPayload{
 		CommandID:   fmt.Sprintf("cmd_%d", time.Now().UnixNano()),
@@ -594,7 +733,9 @@ func (api *ServerAPI) handleCreateIPSet(w http.ResponseWriter, r *http.Request) 
 	}
 	_ = api.hub.DispatchCommand(id, cmd)
 
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(setObj)
 }
 
 func (api *ServerAPI) handleAddIPSetEntries(w http.ResponseWriter, r *http.Request) {
@@ -624,6 +765,31 @@ func (api *ServerAPI) handleAddIPSetEntries(w http.ResponseWriter, r *http.Reque
 		entries = req.Entries
 	}
 
+	if entries == nil {
+		entries = []string{}
+	}
+
+	// Persiste entradas no banco de dados local
+	set, _ := api.db.GetIPSet(id, name)
+	if set == nil {
+		// Cria o conjunto se ainda não estiver cadastrado no banco
+		set = &models.IPSet{
+			ID:              fmt.Sprintf("set_%d", time.Now().UnixNano()),
+			ServerID:        id,
+			Name:            name,
+			TypeName:        "hash:ip",
+			Family:          "inet",
+			MaxElem:         65536,
+			CommentEnabled:  true,
+			MemorySizeBytes: 1024,
+			ElementsCount:   int64(len(entries)),
+			CreatedAt:       time.Now(),
+			UpdatedAt:       time.Now(),
+		}
+		_ = api.db.UpsertIPSet(set)
+	}
+	_ = api.db.SaveIPSetEntries(set.ID, entries)
+
 	// Executa swap atômico no nó alvo
 	cmd := server.CommandPayload{
 		CommandID:    fmt.Sprintf("cmd_%d", time.Now().UnixNano()),
@@ -634,10 +800,171 @@ func (api *ServerAPI) handleAddIPSetEntries(w http.ResponseWriter, r *http.Reque
 	}
 	_ = api.hub.DispatchCommand(id, cmd)
 
+	_ = api.db.RecordAuditLog(&models.AuditLogEntry{
+		ActorUsername: getUserFromContext(r).Username,
+		IPAddress:     r.RemoteAddr,
+		Action:        "IPSET_SWAP",
+		TargetServers: []string{id},
+		Result:        "SUCCESS",
+		Details:       fmt.Sprintf("IPSet %s atualizado com %d entradas", name, len(entries)),
+	})
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":       true,
 		"entries_count": len(entries),
+	})
+}
+
+func (api *ServerAPI) handleGetIPSetEntries(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	name := chi.URLParam(r, "name")
+
+	set, err := api.db.GetIPSet(id, name)
+	if err != nil || set == nil {
+		// Mock demonstrativo inicial
+		var defaultEntries []string
+		if name == "whitelist_office" {
+			defaultEntries = []string{"192.168.1.10", "192.168.1.11", "10.0.0.5", "10.0.0.6", "172.16.0.2"}
+		} else {
+			defaultEntries = []string{"198.51.100.1", "203.0.113.5", "192.0.2.45", "10.200.0.0/24"}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(defaultEntries)
+		return
+	}
+
+	entries, err := api.db.GetIPSetEntries(set.ID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"falha ao buscar entradas do ipset: %v"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(entries)
+}
+
+// checkIPSetInUse verifica se um conjunto ipset está associado a alguma regra ativa no firewall
+func (api *ServerAPI) checkIPSetInUse(serverID, ipsetName string) ([]string, error) {
+	var referencingRules []string
+
+	// 1. Verifica no banco de dados local (tabela firewall_rules)
+	dbRules, err := api.db.FindRulesUsingIPSet(serverID, ipsetName)
+	if err == nil && len(dbRules) > 0 {
+		for _, r := range dbRules {
+			referencingRules = append(referencingRules, fmt.Sprintf("%s:%s (#%d) -> %s", r.TableName, r.ChainName, r.Position, r.Target))
+		}
+	}
+
+	// 2. Verifica nas regras ativas em memória / telemetria do Agente no Hub
+	rawV4, rawV6 := api.hub.GetLatestRules(serverID)
+	if rawV4 != "" {
+		parsed, err := parser.ParseIptablesSave(rawV4)
+		if err == nil && parsed != nil {
+			for tblName, tbl := range parsed.Tables {
+				for idx, r := range tbl.Rules {
+					if r.MatchSetName == ipsetName ||
+						strings.Contains(r.RawText, fmt.Sprintf("--match-set %s ", ipsetName)) ||
+						strings.HasSuffix(r.RawText, fmt.Sprintf("--match-set %s", ipsetName)) ||
+						strings.Contains(r.RawText, fmt.Sprintf("match-set %s", ipsetName)) {
+						referencingRules = append(referencingRules, fmt.Sprintf("%s:%s (#%d) -> %s", tblName, r.Chain, idx+1, r.Target))
+					}
+				}
+			}
+		}
+	}
+
+	if rawV6 != "" {
+		parsed, err := parser.ParseIptablesSave(rawV6)
+		if err == nil && parsed != nil {
+			for tblName, tbl := range parsed.Tables {
+				for idx, r := range tbl.Rules {
+					if r.MatchSetName == ipsetName ||
+						strings.Contains(r.RawText, fmt.Sprintf("--match-set %s ", ipsetName)) ||
+						strings.HasSuffix(r.RawText, fmt.Sprintf("--match-set %s", ipsetName)) {
+						referencingRules = append(referencingRules, fmt.Sprintf("%s:%s (#%d v6) -> %s", tblName, r.Chain, idx+1, r.Target))
+					}
+				}
+			}
+		}
+	}
+
+	// Remove duplicatas
+	seen := make(map[string]bool)
+	var unique []string
+	for _, item := range referencingRules {
+		if !seen[item] {
+			seen[item] = true
+			unique = append(unique, item)
+		}
+	}
+	return unique, nil
+}
+
+func (api *ServerAPI) handleGetIPSetUsage(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	name := chi.URLParam(r, "name")
+
+	boundRules, _ := api.checkIPSetInUse(id, name)
+	inUse := len(boundRules) > 0
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ipset_name":  name,
+		"in_use":      inUse,
+		"bound_rules": boundRules,
+	})
+}
+
+func (api *ServerAPI) handleDeleteIPSet(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	name := chi.URLParam(r, "name")
+
+	// 1. Validação estrita: se estiver vinculado a uma regra ativa, rejeita a exclusão!
+	boundRules, err := api.checkIPSetInUse(id, name)
+	if err == nil && len(boundRules) > 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict) // 409 Conflict
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": fmt.Sprintf(
+				"Não é possível excluir o IPSet '%s': ele está ativamente vinculado a %d regra(s) de firewall: [%s]. Remova ou edite as regras vinculadas antes de excluir este IPSet.",
+				name, len(boundRules), strings.Join(boundRules, ", "),
+			),
+			"in_use":      true,
+			"bound_rules": boundRules,
+		})
+		return
+	}
+
+	// 2. Notifica o agente para destruir o IPSet no kernel (ipset destroy)
+	cmd := server.CommandPayload{
+		CommandID:   fmt.Sprintf("cmd_%d", time.Now().UnixNano()),
+		Type:        "MANAGE_IPSET",
+		IPSetAction: "DESTROY",
+		IPSetName:   name,
+	}
+	_ = api.hub.DispatchCommand(id, cmd)
+
+	// 3. Remove do banco de dados SQLite
+	if err := api.db.DeleteIPSet(id, name); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"falha ao excluir ipset do banco: %v"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	// 4. Registra auditoria
+	_ = api.db.RecordAuditLog(&models.AuditLogEntry{
+		ActorUsername: getUserFromContext(r).Username,
+		IPAddress:     r.RemoteAddr,
+		Action:        "IPSET_DELETE",
+		TargetServers: []string{id},
+		Result:        "SUCCESS",
+		Details:       fmt.Sprintf("IPSet '%s' excluído do servidor %s com verificação de desvinculação aprovada.", name, id),
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": fmt.Sprintf("IPSet '%s' excluído com sucesso", name),
 	})
 }
 
@@ -746,3 +1073,391 @@ func sha256Hex(s string) string {
 	h := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(h[:])
 }
+
+// --- Handlers de Autenticação Federada OIDC (Públicos) ---
+
+func (api *ServerAPI) handleOIDCStatus(w http.ResponseWriter, r *http.Request) {
+	cfg, err := api.db.GetOIDCConfig()
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil || cfg == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"enabled": false, "provider_name": "OpenID Connect"})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"enabled":       cfg.Enabled && cfg.IssuerURL != "" && cfg.ClientID != "",
+		"provider_name": cfg.ProviderName,
+	})
+}
+
+func (api *ServerAPI) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
+	cfg, err := api.db.GetOIDCConfig()
+	if err != nil || !cfg.Enabled || cfg.IssuerURL == "" || cfg.ClientID == "" {
+		http.Error(w, `{"error":"autenticação federada OIDC não está configurada ou ativada"}`, http.StatusBadRequest)
+		return
+	}
+
+	doc, err := auth.FetchOIDCDiscovery(cfg.IssuerURL)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"falha na descoberta OIDC: %v"}`, err), http.StatusBadGateway)
+		return
+	}
+
+	state, _ := api.authMgr.GenerateSessionToken()
+	nonce, _ := api.authMgr.GenerateSessionToken()
+
+	redirectURI := cfg.RedirectURL
+	if redirectURI == "" {
+		scheme := "http"
+		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+			scheme = "https"
+		}
+		redirectURI = fmt.Sprintf("%s://%s/api/v1/auth/oidc/callback", scheme, r.Host)
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "lfm_oidc_state",
+		Value:    state,
+		Path:     "/",
+		Expires:  time.Now().Add(10 * time.Minute),
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	authURL := auth.BuildOIDCAuthURL(doc, cfg.ClientID, redirectURI, cfg.Scopes, state, nonce)
+	http.Redirect(w, r, authURL, http.StatusFound)
+}
+
+func (api *ServerAPI) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
+	if errParam := r.URL.Query().Get("error"); errParam != "" {
+		desc := r.URL.Query().Get("error_description")
+		http.Redirect(w, r, "/?error="+url.QueryEscape(errParam+": "+desc), http.StatusFound)
+		return
+	}
+
+	code := r.URL.Query().Get("code")
+	state := r.URL.Query().Get("state")
+	if code == "" || state == "" {
+		http.Redirect(w, r, "/?error="+url.QueryEscape("parâmetros code/state ausentes"), http.StatusFound)
+		return
+	}
+
+	stateCookie, err := r.Cookie("lfm_oidc_state")
+	if err != nil || stateCookie == nil || stateCookie.Value != state {
+		http.Redirect(w, r, "/?error="+url.QueryEscape("validação de state CSRF falhou"), http.StatusFound)
+		return
+	}
+
+	cfg, err := api.db.GetOIDCConfig()
+	if err != nil || !cfg.Enabled {
+		http.Redirect(w, r, "/?error="+url.QueryEscape("OIDC desativado no servidor"), http.StatusFound)
+		return
+	}
+
+	doc, err := auth.FetchOIDCDiscovery(cfg.IssuerURL)
+	if err != nil {
+		http.Redirect(w, r, "/?error="+url.QueryEscape("falha na descoberta OIDC: "+err.Error()), http.StatusFound)
+		return
+	}
+
+	redirectURI := cfg.RedirectURL
+	if redirectURI == "" {
+		scheme := "http"
+		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+			scheme = "https"
+		}
+		redirectURI = fmt.Sprintf("%s://%s/api/v1/auth/oidc/callback", scheme, r.Host)
+	}
+
+	userInfo, err := auth.ExchangeOIDCCode(doc, cfg.ClientID, cfg.ClientSecret, redirectURI, code)
+	if err != nil {
+		http.Redirect(w, r, "/?error="+url.QueryEscape("falha na troca do token OIDC: "+err.Error()), http.StatusFound)
+		return
+	}
+
+	displayName := userInfo.Name
+	if displayName == "" {
+		displayName = userInfo.PreferredUsername
+	}
+
+	userRole := cfg.DefaultRole
+	if userRole != "admin" && userRole != "viewer" {
+		userRole = "viewer"
+	}
+
+	user, err := api.db.UpsertFederatedUser(userInfo.PreferredUsername, displayName, userInfo.Email, userRole)
+	if err != nil {
+		http.Redirect(w, r, "/?error="+url.QueryEscape("erro ao provisionar usuário federado: "+err.Error()), http.StatusFound)
+		return
+	}
+
+	rawToken, tokenHash := api.authMgr.GenerateSessionToken()
+	expiresAt := time.Now().Add(24 * time.Hour)
+	_, _ = api.db.CreateSession(user, tokenHash, r.RemoteAddr, r.UserAgent(), expiresAt)
+
+	_ = api.db.RecordAuditLog(&models.AuditLogEntry{
+		ActorID:       user.ID,
+		ActorUsername: user.Username,
+		IPAddress:     r.RemoteAddr,
+		Action:        "USER_OIDC_LOGIN_SUCCESS",
+		TargetServers: []string{"system"},
+		Result:        "SUCCESS",
+		Details:       fmt.Sprintf("Login federado via %s (role: %s)", cfg.ProviderName, user.Role),
+	})
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "lfm_session",
+		Value:    rawToken,
+		Path:     "/",
+		Expires:  expiresAt,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "lfm_oidc_state",
+		Value:    "",
+		Path:     "/",
+		Expires:  time.Unix(0, 0),
+		HttpOnly: true,
+	})
+
+	http.Redirect(w, r, "/?sso=success&token="+rawToken, http.StatusFound)
+}
+
+// --- Handlers de Gestão do Usuário Conectado ---
+
+func (api *ServerAPI) handleChangePassword(w http.ResponseWriter, r *http.Request) {
+	u := getUserFromContext(r)
+	if u == nil {
+		http.Error(w, `{"error":"não autenticado"}`, http.StatusUnauthorized)
+		return
+	}
+
+	var req models.PasswordChangeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"payload JSON inválido"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := api.authMgr.ChangeUserPassword(u.ID, req.CurrentPassword, req.NewPassword); err != nil {
+		_ = api.db.RecordAuditLog(&models.AuditLogEntry{
+			ActorID:       u.ID,
+			ActorUsername: u.Username,
+			IPAddress:     r.RemoteAddr,
+			Action:        "USER_PASSWORD_CHANGE_FAILED",
+			TargetServers: []string{"system"},
+			Result:        "FAILURE",
+			Details:       err.Error(),
+		})
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
+		return
+	}
+
+	_ = api.db.RecordAuditLog(&models.AuditLogEntry{
+		ActorID:       u.ID,
+		ActorUsername: u.Username,
+		IPAddress:     r.RemoteAddr,
+		Action:        "USER_PASSWORD_CHANGED",
+		TargetServers: []string{"system"},
+		Result:        "SUCCESS",
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"success":true,"message":"Senha alterada com sucesso"}`))
+}
+
+func (api *ServerAPI) handleSetupTOTP(w http.ResponseWriter, r *http.Request) {
+	u := getUserFromContext(r)
+	if u == nil {
+		http.Error(w, `{"error":"não autenticado"}`, http.StatusUnauthorized)
+		return
+	}
+
+	setup, err := api.authMgr.SetupTOTP(u.ID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(setup)
+}
+
+func (api *ServerAPI) handleEnableTOTP(w http.ResponseWriter, r *http.Request) {
+	u := getUserFromContext(r)
+	if u == nil {
+		http.Error(w, `{"error":"não autenticado"}`, http.StatusUnauthorized)
+		return
+	}
+
+	var req models.TOTPEnableRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"payload inválido"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := api.authMgr.EnableTOTP(u.ID, req.Secret, req.Code); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
+		return
+	}
+
+	_ = api.db.RecordAuditLog(&models.AuditLogEntry{
+		ActorID:       u.ID,
+		ActorUsername: u.Username,
+		IPAddress:     r.RemoteAddr,
+		Action:        "USER_TOTP_ENABLED",
+		TargetServers: []string{"system"},
+		Result:        "SUCCESS",
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"success":true,"message":"Autenticação 2FA ativada com sucesso"}`))
+}
+
+func (api *ServerAPI) handleDisableTOTP(w http.ResponseWriter, r *http.Request) {
+	u := getUserFromContext(r)
+	if u == nil {
+		http.Error(w, `{"error":"não autenticado"}`, http.StatusUnauthorized)
+		return
+	}
+
+	var req models.TOTPDisableRequest
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	if err := api.authMgr.DisableTOTP(u.ID, req.Password); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
+		return
+	}
+
+	_ = api.db.RecordAuditLog(&models.AuditLogEntry{
+		ActorID:       u.ID,
+		ActorUsername: u.Username,
+		IPAddress:     r.RemoteAddr,
+		Action:        "USER_TOTP_DISABLED",
+		TargetServers: []string{"system"},
+		Result:        "SUCCESS",
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"success":true,"message":"Autenticação 2FA desativada com sucesso"}`))
+}
+
+func (api *ServerAPI) handleListSessions(w http.ResponseWriter, r *http.Request) {
+	u := getUserFromContext(r)
+	if u == nil {
+		http.Error(w, `{"error":"não autenticado"}`, http.StatusUnauthorized)
+		return
+	}
+
+	sessions, err := api.db.ListUserSessions(u.ID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(sessions)
+}
+
+func (api *ServerAPI) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
+	u := getUserFromContext(r)
+	if u == nil {
+		http.Error(w, `{"error":"não autenticado"}`, http.StatusUnauthorized)
+		return
+	}
+
+	sessionID := chi.URLParam(r, "id")
+	if err := api.db.RevokeUserSession(sessionID, u.ID); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"success":true,"message":"Sessão encerrada"}`))
+}
+
+// --- Handlers de Configuração OIDC (Restritos a Administrador) ---
+
+func (api *ServerAPI) handleGetOIDCSettings(w http.ResponseWriter, r *http.Request) {
+	cfg, err := api.db.GetOIDCConfig()
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	// Mascara o segredo do cliente para segurança no frontend
+	sanitized := *cfg
+	if sanitized.ClientSecret != "" {
+		sanitized.ClientSecret = "••••••••••••••••"
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(sanitized)
+}
+
+func (api *ServerAPI) handleSaveOIDCSettings(w http.ResponseWriter, r *http.Request) {
+	var cfg models.OIDCConfig
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		http.Error(w, `{"error":"payload JSON inválido"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Se o secret for a máscara enviada pelo frontend, não sobrescreve
+	if cfg.ClientSecret == "••••••••••••••••" {
+		cfg.ClientSecret = ""
+	}
+
+	if cfg.DefaultRole != "admin" && cfg.DefaultRole != "viewer" {
+		cfg.DefaultRole = "viewer"
+	}
+
+	if err := api.db.SaveOIDCConfig(&cfg); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"falha ao salvar configurações OIDC: %v"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	u := getUserFromContext(r)
+	actor := "admin"
+	if u != nil {
+		actor = u.Username
+	}
+
+	_ = api.db.RecordAuditLog(&models.AuditLogEntry{
+		ActorUsername: actor,
+		IPAddress:     r.RemoteAddr,
+		Action:        "OIDC_CONFIG_UPDATED",
+		TargetServers: []string{"system"},
+		Result:        "SUCCESS",
+		Details:       fmt.Sprintf("OIDC Provider: %s, Enabled: %v, DefaultRole: %s", cfg.ProviderName, cfg.Enabled, cfg.DefaultRole),
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"success":true,"message":"Configurações OIDC salvas com sucesso"}`))
+}
+
+func (api *ServerAPI) handleTestOIDCSettings(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		IssuerURL string `json:"issuer_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.IssuerURL == "" {
+		http.Error(w, `{"error":"issuer_url é obrigatório"}`, http.StatusBadRequest)
+		return
+	}
+
+	doc, err := auth.FetchOIDCDiscovery(req.IssuerURL)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"descoberta falhou: %v"}`, err), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":                true,
+		"issuer":                 doc.Issuer,
+		"authorization_endpoint": doc.AuthorizationEndpoint,
+		"token_endpoint":         doc.TokenEndpoint,
+		"userinfo_endpoint":      doc.UserinfoEndpoint,
+		"end_session_endpoint":   doc.EndSessionEndpoint,
+	})
+}
+

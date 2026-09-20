@@ -5,23 +5,75 @@ import { RuleManager } from './components/RuleManager';
 import { IPSetManager } from './components/IPSetManager';
 import { BackupManager } from './components/BackupManager';
 import { AuditView } from './components/AuditView';
-import { Server, RuleCounterSample } from './types';
+import { Login } from './components/Login';
+import { UserManagement } from './components/UserManagement';
+import { Server, RuleCounterSample, User } from './types';
 import { api } from './api/client';
+import { Shield } from 'lucide-react';
 
 export const App: React.FC = () => {
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [isCheckingAuth, setIsCheckingAuth] = useState<boolean>(true);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [showUserModal, setShowUserModal] = useState<boolean>(false);
+
   const [servers, setServers] = useState<Server[]>([]);
   const [selectedServerId, setSelectedServerId] = useState<string>('ALL');
+  const [hasSetInitialServer, setHasSetInitialServer] = useState<boolean>(false);
+  const [rulesUpdateKey, setRulesUpdateKey] = useState<number>(0);
   const [activeTab, setActiveTab] = useState<string>('servers');
   const [lang, setLang] = useState<'pt' | 'en'>('pt');
   const [pendingRollback, setPendingRollback] = useState<{ changeId: string; secondsRemaining: number } | null>(null);
   const [telemetrySamples, setTelemetrySamples] = useState<Record<string, RuleCounterSample>>({});
 
+  // Checagem de parâmetros de redirecionamento SSO e autenticação inicial
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const ssoToken = urlParams.get('token');
+    const ssoError = urlParams.get('error');
+
+    if (ssoToken) {
+      api.setToken(ssoToken);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
+    if (ssoError) {
+      setLoginError(decodeURIComponent(ssoError));
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
+    const checkAuth = async () => {
+      try {
+        const me = await api.getMe();
+        setCurrentUser(me);
+      } catch {
+        api.setToken(null);
+        setCurrentUser(null);
+      } finally {
+        setIsCheckingAuth(false);
+      }
+    };
+
+    checkAuth();
+  }, []);
+
+  const handleLogout = async () => {
+    try {
+      await api.logout();
+    } finally {
+      setCurrentUser(null);
+      setShowUserModal(false);
+    }
+  };
+
   const loadServers = async () => {
+    if (!currentUser) return;
     try {
       const list = await api.getServers();
       setServers(list);
-      if (list.length > 0 && selectedServerId === 'ALL') {
-        // Mantém 'ALL' ou seleciona primeiro se desejado
+      if (!hasSetInitialServer && list.length > 0) {
+        setSelectedServerId(list[0].id);
+        setHasSetInitialServer(true);
       }
     } catch (e) {
       console.error('Falha ao carregar servidores:', e);
@@ -29,10 +81,11 @@ export const App: React.FC = () => {
   };
 
   useEffect(() => {
+    if (!currentUser) return;
     loadServers();
     const interval = setInterval(loadServers, 10000);
     return () => clearInterval(interval);
-  }, []);
+  }, [currentUser]);
 
   // Timer de Lockout countdown
   useEffect(() => {
@@ -54,6 +107,7 @@ export const App: React.FC = () => {
 
   // Conexão WebSocket em tempo real com o Hub
   useEffect(() => {
+    if (!currentUser) return;
     const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${wsProto}//${window.location.host}/api/v1/ui/ws`);
 
@@ -62,6 +116,8 @@ export const App: React.FC = () => {
         const data = JSON.parse(event.data);
         if (data.event === 'server_online' || data.event === 'server_offline') {
           loadServers();
+        } else if (data.event === 'rules_updated') {
+          setRulesUpdateKey((prev) => prev + 1);
         } else if (data.event === 'telemetry_update' && data.samples) {
           const map: Record<string, RuleCounterSample> = {};
           data.samples.forEach((s: RuleCounterSample) => {
@@ -70,6 +126,7 @@ export const App: React.FC = () => {
           setTelemetrySamples((prev) => ({ ...prev, ...map }));
         } else if (data.event === 'safety_rollback_triggered') {
           setPendingRollback(null);
+          setRulesUpdateKey((prev) => prev + 1);
           alert(`ALERTA: Rollback automático disparado no host ${data.hostname}! Motivo: ${data.reason}`);
           loadServers();
         }
@@ -79,7 +136,7 @@ export const App: React.FC = () => {
     };
 
     return () => ws.close();
-  }, []);
+  }, [currentUser]);
 
   const handleTriggerLockout = (changeId: string, timeoutSec: number) => {
     setPendingRollback({ changeId, secondsRemaining: timeoutSec });
@@ -91,14 +148,42 @@ export const App: React.FC = () => {
     try {
       await api.confirmBatchRules(targets, pendingRollback.changeId);
       setPendingRollback(null);
+      setRulesUpdateKey((prev) => prev + 1);
       alert(lang === 'pt' ? 'Sucesso! Regras confirmadas permanentemente nos servidores.' : 'Success! Rules permanently committed on servers.');
     } catch (e) {
       alert('Erro ao confirmar regras: ' + e);
     }
   };
 
+  // Carregamento inicial de autenticação
+  if (isCheckingAuth) {
+    return (
+      <div className="min-h-screen bg-black text-zinc-100 flex flex-col items-center justify-center">
+        <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 mb-4 animate-pulse">
+          <Shield className="w-6 h-6" />
+        </div>
+        <div className="text-xs font-mono text-zinc-400">Verificando credenciais e sessão segura...</div>
+      </div>
+    );
+  }
+
+  // Tela de Login caso não esteja autenticado
+  if (!currentUser) {
+    return (
+      <Login
+        onLoginSuccess={(user) => {
+          setCurrentUser(user);
+          setLoginError(null);
+        }}
+        lang={lang}
+        onToggleLang={() => setLang((l) => (l === 'pt' ? 'en' : 'pt'))}
+        errorMessage={loginError || undefined}
+      />
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+    <div className="min-h-screen bg-black text-zinc-100 flex flex-col selection:bg-amber-500/30 selection:text-amber-200">
       <Navbar
         servers={servers}
         selectedServerId={selectedServerId}
@@ -109,6 +194,9 @@ export const App: React.FC = () => {
         onSelectTab={setActiveTab}
         pendingRollback={pendingRollback}
         onConfirmRollback={handleConfirmCommit}
+        currentUser={currentUser}
+        onOpenUserManagement={() => setShowUserModal(true)}
+        onLogout={handleLogout}
       />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6">
@@ -119,9 +207,12 @@ export const App: React.FC = () => {
           <RuleManager
             servers={servers}
             selectedServerId={selectedServerId}
+            onSelectServer={setSelectedServerId}
             lang={lang}
             onTriggerLockout={handleTriggerLockout}
             telemetrySamples={telemetrySamples}
+            userRole={currentUser.role}
+            rulesUpdateKey={rulesUpdateKey}
           />
         )}
         {activeTab === 'ipsets' && (
@@ -129,6 +220,7 @@ export const App: React.FC = () => {
             servers={servers}
             selectedServerId={selectedServerId}
             lang={lang}
+            userRole={currentUser.role}
           />
         )}
         {activeTab === 'backups' && (
@@ -137,13 +229,24 @@ export const App: React.FC = () => {
             selectedServerId={selectedServerId}
             lang={lang}
             onTriggerLockout={handleTriggerLockout}
+            userRole={currentUser.role}
           />
         )}
         {activeTab === 'audit' && <AuditView lang={lang} />}
       </main>
 
-      <footer className="border-t border-slate-800/80 py-4 text-center text-xs text-slate-500 font-mono">
-        Linux Firewall Manager (LFM) • Centralized Netfilter Control Plane • Zero-Shell Architecture
+      {/* Modal de Gerenciamento de Usuário, Senha, 2FA e OIDC */}
+      {showUserModal && (
+        <UserManagement
+          currentUser={currentUser}
+          onUpdateUser={(updated) => setCurrentUser(updated)}
+          lang={lang}
+          onClose={() => setShowUserModal(false)}
+        />
+      )}
+
+      <footer className="border-t border-zinc-900 py-4 text-center text-xs text-zinc-600 font-mono">
+        Linux Firewall Manager (LFM) • Centralized Netfilter Control Plane • Zero-Shell Architecture • RBAC: <span className="text-amber-400 font-bold uppercase">{currentUser.role}</span>
       </footer>
     </div>
   );

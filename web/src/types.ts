@@ -91,3 +91,44 @@ export interface AuditLog {
   result: string;
   details?: string;
 }
+
+export interface User {
+  id: string;
+  username: string;
+  display_name: string;
+  email?: string;
+  auth_type: 'local' | 'oidc';
+  totp_enabled: boolean;
+  role: 'admin' | 'viewer';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UserSession {
+  id: string;
+  user_id: string;
+  ip_address: string;
+  user_agent?: string;
+  expires_at: string;
+  created_at: string;
+}
+
+export interface OIDCConfig {
+  enabled: boolean;
+  provider_name: string;
+  issuer_url: string;
+  client_id: string;
+  client_secret?: string;
+  redirect_url: string;
+  scopes: string;
+  default_role: 'admin' | 'viewer';
+  updated_at?: string;
+}
+
+export interface TOTPSetupData {
+  secret: string;
+  otpauth_url: string;
+  issuer: string;
+  account_name: string;
+}
+

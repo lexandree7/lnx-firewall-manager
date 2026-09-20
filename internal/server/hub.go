@@ -28,6 +28,8 @@ type AgentSession struct {
 	ConnectedAt    time.Time
 	LastSeenAt     time.Time
 	LastRulesHash  string
+	LastRulesV4    string
+	LastRulesV6    string
 	WriteMu        sync.Mutex
 	PendingCommits map[string]time.Time // changeID -> timestamp
 }
@@ -165,6 +167,8 @@ func (h *Hub) handleHello(conn *websocket.Conn, msg *AgentInboundMessage, remote
 		ConnectedAt:    time.Now(),
 		LastSeenAt:     time.Now(),
 		LastRulesHash:  msg.RulesHash,
+		LastRulesV4:    msg.CurrentRulesV4,
+		LastRulesV6:    msg.CurrentRulesV6,
 		PendingCommits: make(map[string]time.Time),
 	}
 
@@ -222,6 +226,12 @@ func (h *Hub) handleHeartbeat(s *AgentSession, msg *AgentInboundMessage) {
 	h.mu.Lock()
 	s.LastSeenAt = time.Now()
 	s.LastRulesHash = msg.RulesHash
+	if msg.CurrentRulesV4 != "" {
+		s.LastRulesV4 = msg.CurrentRulesV4
+	}
+	if msg.CurrentRulesV6 != "" {
+		s.LastRulesV6 = msg.CurrentRulesV6
+	}
 	h.mu.Unlock()
 
 	_ = h.db.UpdateServerStatus(s.ServerID, "online")
@@ -243,6 +253,25 @@ func (h *Hub) handleTelemetry(s *AgentSession, msg *AgentInboundMessage) {
 
 func (h *Hub) handleCmdResult(s *AgentSession, msg *AgentInboundMessage) {
 	log.Printf("[HUB] Resultado de comando recebido de %s: CmdID=%s, Sucesso=%v, Erro=%s", s.Hostname, msg.CommandID, msg.Success, msg.ErrorMessage)
+	if msg.CurrentRulesV4 != "" {
+		h.mu.Lock()
+		s.LastRulesV4 = msg.CurrentRulesV4
+		if msg.CurrentRulesV6 != "" {
+			s.LastRulesV6 = msg.CurrentRulesV6
+		}
+		if msg.RulesHash != "" {
+			s.LastRulesHash = msg.RulesHash
+		}
+		h.mu.Unlock()
+
+		if srv, err := h.db.GetServerByID(s.ServerID); err == nil && srv != nil {
+			if msg.RulesHash != "" {
+				srv.LastCanonicalHash = msg.RulesHash
+			}
+			_ = h.db.UpsertServer(srv)
+		}
+	}
+
 	h.broadcastToUI(map[string]interface{}{
 		"event":         "command_result",
 		"server_id":     s.ServerID,
@@ -250,10 +279,26 @@ func (h *Hub) handleCmdResult(s *AgentSession, msg *AgentInboundMessage) {
 		"success":       msg.Success,
 		"error_message": msg.ErrorMessage,
 	})
+	h.broadcastToUI(map[string]interface{}{
+		"event":     "rules_updated",
+		"server_id": s.ServerID,
+	})
 }
 
 func (h *Hub) handleRollbackReport(s *AgentSession, msg *AgentInboundMessage) {
 	log.Printf("[HUB] ALERTA DE ROLLBACK de %s: Regra revertida automaticamente! Motivo: %s", s.Hostname, msg.RollbackReason)
+
+	if msg.CurrentRulesV4 != "" {
+		h.mu.Lock()
+		s.LastRulesV4 = msg.CurrentRulesV4
+		if msg.CurrentRulesV6 != "" {
+			s.LastRulesV6 = msg.CurrentRulesV6
+		}
+		if msg.RulesHash != "" {
+			s.LastRulesHash = msg.RulesHash
+		}
+		h.mu.Unlock()
+	}
 
 	// Registra auditoria
 	_ = h.db.RecordAuditLog(&models.AuditLogEntry{
@@ -271,6 +316,10 @@ func (h *Hub) handleRollbackReport(s *AgentSession, msg *AgentInboundMessage) {
 		"server_id": s.ServerID,
 		"hostname":  s.Hostname,
 		"reason":    msg.RollbackReason,
+	})
+	h.broadcastToUI(map[string]interface{}{
+		"event":     "rules_updated",
+		"server_id": s.ServerID,
 	})
 }
 
@@ -377,6 +426,17 @@ func (h *Hub) IsOnline(serverID string) bool {
 	defer h.mu.RUnlock()
 	_, ok := h.agents[serverID]
 	return ok
+}
+
+// GetLatestRules retorna os últimos dumps de regras v4 e v6 recebidos do agente
+func (h *Hub) GetLatestRules(serverID string) (string, string) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	sess, ok := h.agents[serverID]
+	if !ok || sess == nil {
+		return "", ""
+	}
+	return sess.LastRulesV4, sess.LastRulesV6
 }
 
 func (h *Hub) heartbeatChecker() {
