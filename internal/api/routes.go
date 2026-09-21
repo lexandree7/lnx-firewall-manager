@@ -435,6 +435,10 @@ func (api *ServerAPI) handleListServers(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if servers == nil {
+		servers = make([]*models.Server, 0)
+	}
+
 	// Atualiza status online dinamicamente baseado no Hub
 	for _, s := range servers {
 		if api.hub.IsOnline(s.ID) {
@@ -971,6 +975,9 @@ func (api *ServerAPI) handleDeleteIPSet(w http.ResponseWriter, r *http.Request) 
 func (api *ServerAPI) handleListBackups(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	backups, _ := api.db.ListBackups(id)
+	if backups == nil {
+		backups = make([]*models.FirewallBackup, 0)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(backups)
 }
@@ -1043,6 +1050,9 @@ func (api *ServerAPI) handleListAuditLogs(w http.ResponseWriter, r *http.Request
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 	logs, _ := api.db.ListAuditLogs(limit, offset)
+	if logs == nil {
+		logs = make([]*models.AuditLogEntry, 0)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(logs)
 }
@@ -1353,6 +1363,9 @@ func (api *ServerAPI) handleListSessions(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
 		return
+	}
+	if sessions == nil {
+		sessions = make([]models.UserSession, 0)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -18,7 +18,7 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
-  servers,
+  servers = [],
   selectedServerId,
   onSelectServer,
   lang,
@@ -31,7 +31,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenUserManagement,
   onLogout,
 }) => {
-  const onlineCount = servers.filter((s) => s.status === 'online').length;
+  const safeServers = Array.isArray(servers) ? servers : [];
+  const onlineCount = safeServers.filter((s) => s && s.status === 'online').length;
 
   return (
     <header className="border-b border-zinc-800 bg-black/95 backdrop-blur sticky top-0 z-40">
@@ -83,9 +84,9 @@ export const Navbar: React.FC<NavbarProps> = ({
               className="bg-transparent text-sm text-zinc-200 outline-none cursor-pointer font-mono"
             >
               <option value="ALL" className="bg-zinc-900 text-zinc-200">
-                {lang === 'pt' ? '⚡ Todos os Servidores (Lote)' : '⚡ All Servers (Batch)'} ({servers.length})
+                {lang === 'pt' ? '⚡ Todos os Servidores (Lote)' : '⚡ All Servers (Batch)'} ({safeServers.length})
               </option>
-              {servers.map((s) => (
+              {safeServers.map((s) => (
                 <option key={s.id} value={s.id} className="bg-zinc-900 text-zinc-200">
                   {s.status === 'online' ? '🟡' : '🔴'} {s.hostname} ({s.ip_address})
                 </option>
@@ -96,7 +97,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           <div className="hidden sm:flex items-center gap-1.5 text-xs font-mono px-2.5 py-1 rounded bg-zinc-950 border border-zinc-800 text-zinc-300">
             <CheckCircle2 className="w-3.5 h-3.5 text-amber-400" />
             <span>
-              {onlineCount}/{servers.length} online
+              {onlineCount}/{safeServers.length} online
             </span>
           </div>
         </div>
@@ -151,7 +152,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       {/* Navegação de Abas com Contador Destacado */}
       <div className="max-w-7xl mx-auto px-4 flex gap-1 border-t border-zinc-800/80 text-sm overflow-x-auto">
         {[
-          { id: 'servers', label: lang === 'pt' ? 'Servidores' : 'Servers', count: servers.length },
+          { id: 'servers', label: lang === 'pt' ? 'Servidores' : 'Servers', count: safeServers.length },
           { id: 'rules', label: lang === 'pt' ? 'Regras & Chains' : 'Rules & Chains' },
           { id: 'ipsets', label: 'IPSets' },
           { id: 'backups', label: 'Backups' },

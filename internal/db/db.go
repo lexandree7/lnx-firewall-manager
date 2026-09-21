@@ -432,7 +432,7 @@ func (d *DB) ListUserSessions(userID string) ([]models.UserSession, error) {
 	}
 	defer rows.Close()
 
-	var sessions []models.UserSession
+	sessions := make([]models.UserSession, 0)
 	for rows.Next() {
 		var s models.UserSession
 		var ua sql.NullString
@@ -658,7 +658,7 @@ func (d *DB) ListServers() ([]*models.Server, error) {
 	}
 	defer rows.Close()
 
-	var servers []*models.Server
+	servers := make([]*models.Server, 0)
 	for rows.Next() {
 		var s models.Server
 		var grpID, hash sql.NullString
@@ -749,7 +749,7 @@ func (d *DB) ListAuditLogs(limit, offset int) ([]*models.AuditLogEntry, error) {
 	}
 	defer rows.Close()
 
-	var logs []*models.AuditLogEntry
+	logs := make([]*models.AuditLogEntry, 0)
 	for rows.Next() {
 		var l models.AuditLogEntry
 		var targetsJSON, diff, details, actorID sql.NullString
@@ -791,7 +791,7 @@ func (d *DB) ListBackups(serverID string) ([]*models.FirewallBackup, error) {
 	}
 	defer rows.Close()
 
-	var backups []*models.FirewallBackup
+	backups := make([]*models.FirewallBackup, 0)
 	for rows.Next() {
 		var b models.FirewallBackup
 		var desc, author sql.NullString
@@ -839,7 +839,7 @@ func (d *DB) ListIPSets(serverID string) ([]*models.IPSet, error) {
 	}
 	defer rows.Close()
 
-	var sets []*models.IPSet
+	sets := make([]*models.IPSet, 0)
 	for rows.Next() {
 		var s models.IPSet
 		var comment, counters int

@@ -9,7 +9,8 @@ interface ServerListProps {
   lang: 'pt' | 'en';
 }
 
-export const ServerList: React.FC<ServerListProps> = ({ servers, onRefresh, lang }) => {
+export const ServerList: React.FC<ServerListProps> = ({ servers = [], onRefresh, lang }) => {
+  const safeServers = Array.isArray(servers) ? servers : [];
   const [showEnrollModal, setShowEnrollModal] = useState(false);
   const [enrollToken, setEnrollToken] = useState('');
   const [copied, setCopied] = useState(false);
@@ -34,8 +35,8 @@ export const ServerList: React.FC<ServerListProps> = ({ servers, onRefresh, lang
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const onlineCount = servers.filter((s) => s.status === 'online').length;
-  const driftCount = servers.filter((s) => s.drift_detected).length;
+  const onlineCount = safeServers.filter((s) => s.status === 'online').length;
+  const driftCount = safeServers.filter((s) => s.drift_detected).length;
 
   return (
     <div className="space-y-6">
@@ -77,7 +78,7 @@ export const ServerList: React.FC<ServerListProps> = ({ servers, onRefresh, lang
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 shadow-md">
           <div className="text-xs font-mono text-zinc-400 uppercase font-medium">{lang === 'pt' ? 'Total' : 'Total'}</div>
-          <div className="text-2xl font-bold text-zinc-100 mt-1">{servers.length}</div>
+          <div className="text-2xl font-bold text-zinc-100 mt-1">{safeServers.length}</div>
         </div>
         <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 shadow-md">
           <div className="text-xs font-mono text-amber-400 uppercase font-bold">{lang === 'pt' ? 'Online' : 'Online'}</div>
@@ -85,7 +86,7 @@ export const ServerList: React.FC<ServerListProps> = ({ servers, onRefresh, lang
         </div>
         <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 shadow-md">
           <div className="text-xs font-mono text-rose-400 uppercase font-medium">{lang === 'pt' ? 'Offline' : 'Offline'}</div>
-          <div className="text-2xl font-bold text-rose-400 mt-1">{servers.length - onlineCount}</div>
+          <div className="text-2xl font-bold text-rose-400 mt-1">{safeServers.length - onlineCount}</div>
         </div>
         <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 shadow-md">
           <div className="text-xs font-mono text-amber-500 uppercase font-medium">
@@ -111,7 +112,7 @@ export const ServerList: React.FC<ServerListProps> = ({ servers, onRefresh, lang
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800/80">
-              {servers.length === 0 ? (
+              {safeServers.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="px-4 py-12 text-center text-zinc-500">
                     <ServerIcon className="w-8 h-8 mx-auto mb-2 opacity-40 text-amber-500/50" />
@@ -121,7 +122,7 @@ export const ServerList: React.FC<ServerListProps> = ({ servers, onRefresh, lang
                   </td>
                 </tr>
               ) : (
-                servers.map((s) => (
+                safeServers.map((s) => (
                   <tr key={s.id} className="hover:bg-zinc-900/50 transition">
                     <td className="px-4 py-3.5">
                       <div className="flex items-center gap-2">

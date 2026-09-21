@@ -12,7 +12,7 @@ interface BackupManagerProps {
 }
 
 export const BackupManager: React.FC<BackupManagerProps> = ({
-  servers,
+  servers = [],
   selectedServerId,
   lang,
   onTriggerLockout,

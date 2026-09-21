@@ -30,13 +30,14 @@ interface IPSetManagerProps {
 }
 
 export const IPSetManager: React.FC<IPSetManagerProps> = ({
-  servers,
+  servers = [],
   selectedServerId,
   lang,
   userRole = 'admin',
 }) => {
+  const safeServers = Array.isArray(servers) ? servers : [];
   const isAdmin = userRole === 'admin';
-  const effectiveServerId = selectedServerId === 'ALL' ? (servers[0]?.id || 'global') : selectedServerId;
+  const effectiveServerId = selectedServerId === 'ALL' ? (safeServers[0]?.id || 'global') : selectedServerId;
 
   const [ipsets, setIpsets] = useState<IPSetItem[]>([
     {

@@ -70,13 +70,15 @@ export const App: React.FC = () => {
     if (!currentUser) return;
     try {
       const list = await api.getServers();
-      setServers(list);
-      if (!hasSetInitialServer && list.length > 0) {
-        setSelectedServerId(list[0].id);
+      const safeList = Array.isArray(list) ? list : [];
+      setServers(safeList);
+      if (!hasSetInitialServer && safeList.length > 0) {
+        setSelectedServerId(safeList[0].id);
         setHasSetInitialServer(true);
       }
     } catch (e) {
       console.error('Falha ao carregar servidores:', e);
+      setServers([]);
     }
   };
 
@@ -144,7 +146,8 @@ export const App: React.FC = () => {
 
   const handleConfirmCommit = async () => {
     if (!pendingRollback) return;
-    const targets = selectedServerId === 'ALL' ? servers.map((s) => s.id) : [selectedServerId];
+    const safeServers = Array.isArray(servers) ? servers : [];
+    const targets = selectedServerId === 'ALL' ? safeServers.map((s) => s.id) : [selectedServerId];
     try {
       await api.confirmBatchRules(targets, pendingRollback.changeId);
       setPendingRollback(null);

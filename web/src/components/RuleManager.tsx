@@ -50,7 +50,7 @@ const DEFAULT_CHAINS_BY_TABLE: Record<TableType, string[]> = {
 };
 
 export const RuleManager: React.FC<RuleManagerProps> = ({
-  servers,
+  servers = [],
   selectedServerId,
   onSelectServer,
   lang,
@@ -59,6 +59,7 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
   userRole = 'admin',
   rulesUpdateKey = 0,
 }) => {
+  const safeServers = Array.isArray(servers) ? servers : [];
   const isAdmin = userRole === 'admin';
   const [selectedTable, setSelectedTable] = useState<TableType>('filter');
   const [selectedChain, setSelectedChain] = useState<string>('INPUT');
@@ -523,7 +524,7 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
 
   const handleOpenPreview = async () => {
     const raw = generateIptablesSaveText();
-    const targets = selectedServerId === 'ALL' ? servers.map((s) => s.id) : [selectedServerId];
+    const targets = selectedServerId === 'ALL' ? safeServers.map((s) => s.id) : [selectedServerId];
 
     try {
       const res = await api.previewBatchRules(targets, raw);
@@ -539,7 +540,7 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
   const handleApplyCommit = async () => {
     setIsApplying(true);
     const raw = generateIptablesSaveText();
-    const targets = selectedServerId === 'ALL' ? servers.map((s) => s.id) : [selectedServerId];
+    const targets = selectedServerId === 'ALL' ? safeServers.map((s) => s.id) : [selectedServerId];
 
     try {
       const res = await api.applyBatchRules(targets, raw, 30);
@@ -666,8 +667,8 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
 
   const targetLabel =
     selectedServerId === 'ALL'
-      ? `${lang === 'pt' ? 'Todos os Servidores' : 'All Servers'} (${servers.length})`
-      : servers.find((s) => s.id === selectedServerId)?.hostname || selectedServerId;
+      ? `${lang === 'pt' ? 'Todos os Servidores' : 'All Servers'} (${safeServers.length})`
+      : safeServers.find((s) => s.id === selectedServerId)?.hostname || selectedServerId;
 
   const activeChains = chainsByTable[selectedTable] || DEFAULT_CHAINS_BY_TABLE[selectedTable];
   const isCurrentChainBuiltin = DEFAULT_CHAINS_BY_TABLE[selectedTable].includes(selectedChain);
@@ -764,7 +765,7 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
       </div>
 
       {/* Banner de Orientação para Modo 'Todos os Servidores' */}
-      {selectedServerId === 'ALL' && servers.length > 0 && (
+      {selectedServerId === 'ALL' && safeServers.length > 0 && (
         <div className="bg-amber-500/10 border border-amber-500/30 p-3.5 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-mono">
           <div className="flex items-center gap-2 text-amber-200">
             <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
@@ -776,7 +777,7 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
           </div>
           {onSelectServer && (
             <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-              {servers.map((s) => (
+              {safeServers.map((s) => (
                 <button
                   key={s.id}
                   onClick={() => onSelectServer(s.id)}

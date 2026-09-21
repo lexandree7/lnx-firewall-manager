@@ -114,7 +114,8 @@ export const api = {
   async listSessions(): Promise<UserSession[]> {
     const res = await request('/user/sessions');
     if (!res.ok) throw new Error('Falha ao listar sessões');
-    return res.json();
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
   },
 
   async revokeSession(sessionId: string): Promise<void> {
@@ -161,7 +162,8 @@ export const api = {
   async getServers(): Promise<Server[]> {
     const res = await request('/servers');
     if (!res.ok) throw new Error('Falha ao listar servidores');
-    return res.json();
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
   },
 
   async getServer(id: string): Promise<Server> {
@@ -223,7 +225,8 @@ export const api = {
   async getIPSets(serverId: string): Promise<IPSetItem[]> {
     const res = await request(`/servers/${serverId}/ipsets`);
     if (!res.ok) throw new Error('Falha ao listar ipsets');
-    return res.json();
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
   },
 
   async createIPSet(serverId: string, data: { name: string; type_name: string; family: string }) {
@@ -239,7 +242,8 @@ export const api = {
   async getIPSetEntries(serverId: string, setName: string): Promise<string[]> {
     const res = await request(`/servers/${serverId}/ipsets/${setName}/entries`);
     if (!res.ok) throw new Error('Falha ao obter entradas do ipset');
-    return res.json();
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
   },
 
   async saveIPSetEntries(serverId: string, setName: string, entries: string[]) {
@@ -276,7 +280,8 @@ export const api = {
   async getBackups(serverId: string): Promise<BackupItem[]> {
     const res = await request(`/servers/${serverId}/backups`);
     if (!res.ok) throw new Error('Falha ao listar backups');
-    return res.json();
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
   },
 
   async createBackup(serverId: string) {
@@ -299,6 +304,7 @@ export const api = {
   async getAuditLogs(): Promise<AuditLog[]> {
     const res = await request('/audit/logs?limit=50');
     if (!res.ok) throw new Error('Falha ao listar auditoria');
-    return res.json();
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
   },
 };
