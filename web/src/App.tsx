@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Navbar } from './components/Navbar';
 import { ServerList } from './components/ServerList';
 import { RuleManager } from './components/RuleManager';
@@ -18,8 +18,11 @@ export const App: React.FC = () => {
   const [showUserModal, setShowUserModal] = useState<boolean>(false);
 
   const [servers, setServers] = useState<Server[]>([]);
-  const [selectedServerId, setSelectedServerId] = useState<string>('ALL');
-  const [hasSetInitialServer, setHasSetInitialServer] = useState<boolean>(false);
+  const [selectedServerId, setSelectedServerId] = useState<string>(() => {
+    return localStorage.getItem('lfm_selected_server') || 'ALL';
+  });
+  const selectedServerIdRef = useRef<string>(selectedServerId);
+  const hasSetInitialServer = useRef<boolean>(false);
   const [rulesUpdateKey, setRulesUpdateKey] = useState<number>(0);
   const [activeTab, setActiveTab] = useState<string>('servers');
   const [lang, setLang] = useState<'pt' | 'en'>('pt');
@@ -66,15 +69,38 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleSelectServer = (id: string) => {
+    setSelectedServerId(id);
+    selectedServerIdRef.current = id;
+    localStorage.setItem('lfm_selected_server', id);
+  };
+
   const loadServers = async () => {
     if (!currentUser) return;
     try {
       const list = await api.getServers();
       const safeList = Array.isArray(list) ? list : [];
       setServers(safeList);
-      if (!hasSetInitialServer && safeList.length > 0) {
-        setSelectedServerId(safeList[0].id);
-        setHasSetInitialServer(true);
+
+      const currentSelected = selectedServerIdRef.current;
+
+      if (!hasSetInitialServer.current) {
+        hasSetInitialServer.current = true;
+        const saved = localStorage.getItem('lfm_selected_server');
+        if (saved && (saved === 'ALL' || safeList.some((s) => s.id === saved))) {
+          setSelectedServerId(saved);
+          selectedServerIdRef.current = saved;
+        } else if (safeList.length > 0) {
+          setSelectedServerId(safeList[0].id);
+          selectedServerIdRef.current = safeList[0].id;
+        }
+      } else {
+        // Se o servidor selecionado foi removido da lista (e não for 'ALL'), seleciona fallback seguro
+        if (currentSelected !== 'ALL' && !safeList.some((s) => s.id === currentSelected)) {
+          const fallback = safeList.length > 0 ? safeList[0].id : 'ALL';
+          setSelectedServerId(fallback);
+          selectedServerIdRef.current = fallback;
+        }
       }
     } catch (e) {
       console.error('Falha ao carregar servidores:', e);
@@ -190,7 +216,7 @@ export const App: React.FC = () => {
       <Navbar
         servers={servers}
         selectedServerId={selectedServerId}
-        onSelectServer={setSelectedServerId}
+        onSelectServer={handleSelectServer}
         lang={lang}
         onToggleLang={() => setLang(lang === 'pt' ? 'en' : 'pt')}
         activeTab={activeTab}
@@ -210,7 +236,7 @@ export const App: React.FC = () => {
           <RuleManager
             servers={servers}
             selectedServerId={selectedServerId}
-            onSelectServer={setSelectedServerId}
+            onSelectServer={handleSelectServer}
             lang={lang}
             onTriggerLockout={handleTriggerLockout}
             telemetrySamples={telemetrySamples}
