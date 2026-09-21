@@ -25,6 +25,7 @@ import {
   Tag,
   ArrowRightLeft,
   ChevronDown,
+  Pencil,
 } from 'lucide-react';
 import { api } from '../api/client';
 
@@ -85,6 +86,7 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
   });
 
   const [showAddModal, setShowAddModal] = useState(false);
+  const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
   const [showAddChainModal, setShowAddChainModal] = useState(false);
   const [newChainName, setNewChainName] = useState('');
   const [showDiffModal, setShowDiffModal] = useState(false);
@@ -411,38 +413,94 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
     setIsModifiedLocally(true);
   };
 
+  const handleOpenEditModal = (rule: Rule) => {
+    setEditingRuleId(rule.id);
+    setRuleForm({
+      protocol: rule.protocol || 'all',
+      src_ip: rule.src_ip || '',
+      dst_ip: rule.dst_ip || '',
+      src_ports: rule.src_ports || '',
+      dst_ports: rule.dst_ports || '',
+      in_interface: rule.in_interface || '',
+      out_interface: rule.out_interface || '',
+      state_match: rule.state_match || '',
+      tcp_flags: rule.tcp_flags || '',
+      limit_rate: rule.limit_rate || '',
+      limit_burst: rule.limit_burst || 0,
+      enable_ipset: !!rule.match_set_name,
+      match_set_name: rule.match_set_name || availableIPSets[0]?.name || '',
+      match_set_direction: rule.match_set_direction || 'src',
+      target: rule.target || 'ACCEPT',
+      target_options: rule.target_options || '',
+      comment: rule.comment || '',
+    });
+    setShowAddModal(true);
+  };
+
   const handleAddRuleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const newRule: Rule = {
-      id: `r_${Date.now()}`,
-      chain_id: `c_${selectedChain.toLowerCase()}`,
-      server_id: selectedServerId,
-      table_name: selectedTable,
-      chain_name: selectedChain,
-      ip_version: 'v4',
-      position: visibleRules.length + 1,
-      protocol: ruleForm.protocol,
-      src_ip: ruleForm.src_ip.trim() || undefined,
-      dst_ip: ruleForm.dst_ip.trim() || undefined,
-      src_ports: ruleForm.src_ports.trim() || undefined,
-      dst_ports: ruleForm.dst_ports.trim() || undefined,
-      in_interface: ruleForm.in_interface.trim() || undefined,
-      out_interface: ruleForm.out_interface.trim() || undefined,
-      state_match: ruleForm.state_match.trim() || undefined,
-      tcp_flags: ruleForm.tcp_flags.trim() || undefined,
-      limit_rate: ruleForm.limit_rate.trim() || undefined,
-      limit_burst: ruleForm.limit_burst || undefined,
-      match_set_name: ruleForm.enable_ipset && ruleForm.match_set_name ? ruleForm.match_set_name.trim() : undefined,
-      match_set_direction: ruleForm.enable_ipset ? ruleForm.match_set_direction : undefined,
-      target: ruleForm.target,
-      target_options: ruleForm.target_options.trim() || undefined,
-      comment: ruleForm.comment.trim() || undefined,
-      packet_counter: 0,
-      byte_counter: 0,
-    };
 
-    setRules([...rules, newRule]);
+    if (editingRuleId) {
+      setRules((prev) =>
+        prev.map((r) => {
+          if (r.id !== editingRuleId) return r;
+          return {
+            ...r,
+            protocol: ruleForm.protocol,
+            src_ip: ruleForm.src_ip.trim() || undefined,
+            dst_ip: ruleForm.dst_ip.trim() || undefined,
+            src_ports: ruleForm.src_ports.trim() || undefined,
+            dst_ports: ruleForm.dst_ports.trim() || undefined,
+            in_interface: ruleForm.in_interface.trim() || undefined,
+            out_interface: ruleForm.out_interface.trim() || undefined,
+            state_match: ruleForm.state_match.trim() || undefined,
+            tcp_flags: ruleForm.tcp_flags.trim() || undefined,
+            limit_rate: ruleForm.limit_rate.trim() || undefined,
+            limit_burst: ruleForm.limit_burst || undefined,
+            match_set_name:
+              ruleForm.enable_ipset && ruleForm.match_set_name ? ruleForm.match_set_name.trim() : undefined,
+            match_set_direction: ruleForm.enable_ipset ? ruleForm.match_set_direction : undefined,
+            target: ruleForm.target,
+            target_options: ruleForm.target_options.trim() || undefined,
+            comment: ruleForm.comment.trim() || undefined,
+            raw_rule_text: undefined,
+          };
+        })
+      );
+    } else {
+      const newRule: Rule = {
+        id: `r_${Date.now()}`,
+        chain_id: `c_${selectedChain.toLowerCase()}`,
+        server_id: selectedServerId,
+        table_name: selectedTable,
+        chain_name: selectedChain,
+        ip_version: 'v4',
+        position: visibleRules.length + 1,
+        protocol: ruleForm.protocol,
+        src_ip: ruleForm.src_ip.trim() || undefined,
+        dst_ip: ruleForm.dst_ip.trim() || undefined,
+        src_ports: ruleForm.src_ports.trim() || undefined,
+        dst_ports: ruleForm.dst_ports.trim() || undefined,
+        in_interface: ruleForm.in_interface.trim() || undefined,
+        out_interface: ruleForm.out_interface.trim() || undefined,
+        state_match: ruleForm.state_match.trim() || undefined,
+        tcp_flags: ruleForm.tcp_flags.trim() || undefined,
+        limit_rate: ruleForm.limit_rate.trim() || undefined,
+        limit_burst: ruleForm.limit_burst || undefined,
+        match_set_name: ruleForm.enable_ipset && ruleForm.match_set_name ? ruleForm.match_set_name.trim() : undefined,
+        match_set_direction: ruleForm.enable_ipset ? ruleForm.match_set_direction : undefined,
+        target: ruleForm.target,
+        target_options: ruleForm.target_options.trim() || undefined,
+        comment: ruleForm.comment.trim() || undefined,
+        packet_counter: 0,
+        byte_counter: 0,
+      };
+
+      setRules((prev) => [...prev, newRule]);
+    }
+
     setIsModifiedLocally(true);
+    setEditingRuleId(null);
     setShowAddModal(false);
   };
 
@@ -720,6 +778,7 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
             <>
               <button
                 onClick={() => {
+                  setEditingRuleId(null);
                   setRuleForm({
                     protocol: 'tcp',
                     src_ip: '',
@@ -948,6 +1007,7 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
                       </p>
                       <button
                         onClick={() => {
+                          setEditingRuleId(null);
                           setRuleForm({
                             protocol: 'tcp',
                             src_ip: '',
@@ -1102,6 +1162,13 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
                               <ArrowDown className="w-3.5 h-3.5" />
                             </button>
                             <button
+                              onClick={() => handleOpenEditModal(r)}
+                              className="p-1 text-amber-400 hover:text-amber-300 rounded hover:bg-zinc-900 transition"
+                              title={lang === 'pt' ? 'Editar Regra' : 'Edit Rule'}
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
                               onClick={() => handleDuplicate(r)}
                               className="p-1 text-zinc-400 hover:text-white rounded hover:bg-zinc-900"
                               title={lang === 'pt' ? 'Duplicar' : 'Duplicate'}
@@ -1199,16 +1266,32 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
           >
             <div className="flex justify-between items-center pb-2 border-b border-zinc-800">
               <h3 className="font-bold text-zinc-100 flex items-center gap-2">
-                <Plus className="w-5 h-5 text-amber-400" />
-                <span>
-                  {lang === 'pt' ? 'Adicionar Regra em' : 'Add Rule into'}{' '}
-                  <span className="text-amber-400 font-mono">*{selectedTable}</span> :
-                  <span className="text-amber-300 font-mono">{selectedChain}</span>
-                </span>
+                {editingRuleId ? (
+                  <>
+                    <Pencil className="w-5 h-5 text-amber-400" />
+                    <span>
+                      {lang === 'pt' ? 'Editar Regra em' : 'Edit Rule in'}{' '}
+                      <span className="text-amber-400 font-mono">*{selectedTable}</span> :
+                      <span className="text-amber-300 font-mono">{selectedChain}</span>
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Plus className="w-5 h-5 text-amber-400" />
+                    <span>
+                      {lang === 'pt' ? 'Adicionar Regra em' : 'Add Rule into'}{' '}
+                      <span className="text-amber-400 font-mono">*{selectedTable}</span> :
+                      <span className="text-amber-300 font-mono">{selectedChain}</span>
+                    </span>
+                  </>
+                )}
               </h3>
               <button
                 type="button"
-                onClick={() => setShowAddModal(false)}
+                onClick={() => {
+                  setShowAddModal(false);
+                  setEditingRuleId(null);
+                }}
                 className="text-zinc-400 hover:text-white"
               >
                 <X className="w-5 h-5" />
@@ -1482,16 +1565,29 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
             <div className="flex justify-end gap-2 pt-3 border-t border-zinc-800">
               <button
                 type="button"
-                onClick={() => setShowAddModal(false)}
+                onClick={() => {
+                  setShowAddModal(false);
+                  setEditingRuleId(null);
+                }}
                 className="bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 px-4 py-2 rounded-lg text-sm transition"
               >
                 {lang === 'pt' ? 'Cancelar' : 'Cancel'}
               </button>
               <button
                 type="submit"
-                className="bg-amber-600 hover:bg-amber-500 text-black font-bold px-5 py-2 rounded-lg text-sm shadow-lg shadow-amber-950/40 transition"
+                className="bg-amber-600 hover:bg-amber-500 text-black font-bold px-5 py-2 rounded-lg text-sm shadow-lg shadow-amber-950/40 transition flex items-center gap-1.5"
               >
-                {lang === 'pt' ? 'Adicionar Regra' : 'Add Rule'}
+                {editingRuleId ? (
+                  <>
+                    <Check className="w-4 h-4 stroke-[2.5]" />
+                    <span>{lang === 'pt' ? 'Salvar Alterações' : 'Save Changes'}</span>
+                  </>
+                ) : (
+                  <>
+                    <Plus className="w-4 h-4 stroke-[2.5]" />
+                    <span>{lang === 'pt' ? 'Adicionar Regra' : 'Add Rule'}</span>
+                  </>
+                )}
               </button>
             </div>
           </form>
