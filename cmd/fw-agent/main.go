@@ -32,13 +32,27 @@ func main() {
 
 	subcommand := os.Args[1]
 
+	defaultConfig := "./agent_config.json"
+	defaultCerts := "./agent_certs"
+	defaultState := "./agent_state"
+
+	// Se executado como root e o diretório /etc/fw-agent existir (ou se o binário foi instalado no sistema),
+	// prioriza os caminhos de produção do systemd
+	if os.Geteuid() == 0 {
+		if _, err := os.Stat("/etc/fw-agent"); err == nil {
+			defaultConfig = "/etc/fw-agent/config.json"
+			defaultCerts = "/etc/fw-agent/certs"
+			defaultState = "/var/lib/fw-agent"
+		}
+	}
+
 	switch subcommand {
 	case "enroll":
 		enrollCmd := flag.NewFlagSet("enroll", flag.ExitOnError)
 		serverFlag := enrollCmd.String("server", "http://localhost:8443", "URL do servidor de controle LFM")
 		tokenFlag := enrollCmd.String("token", "", "Token de enrollment de uso único")
-		certsDir := enrollCmd.String("certs-dir", "./agent_certs", "Diretório para salvar os certificados mTLS emitidos")
-		configFile := enrollCmd.String("config", "./agent_config.json", "Caminho do arquivo de configuração do agente")
+		certsDir := enrollCmd.String("certs-dir", defaultCerts, "Diretório para salvar os certificados mTLS emitidos")
+		configFile := enrollCmd.String("config", defaultConfig, "Caminho do arquivo de configuração do agente")
 		_ = enrollCmd.Parse(os.Args[2:])
 
 		if *tokenFlag == "" {
@@ -51,9 +65,9 @@ func main() {
 		runCmd := flag.NewFlagSet("run", flag.ExitOnError)
 		serverFlag := runCmd.String("server", "", "URL do servidor (opcional se especificado no config)")
 		idFlag := runCmd.String("id", "", "ID do servidor gerenciado")
-		configFile := runCmd.String("config", "./agent_config.json", "Caminho do arquivo de configuração do agente")
-		certsDir := runCmd.String("certs-dir", "./agent_certs", "Diretório de certificados mTLS")
-		stateDir := runCmd.String("state-dir", "./agent_state", "Diretório de estado e locks de segurança")
+		configFile := runCmd.String("config", defaultConfig, "Caminho do arquivo de configuração do agente")
+		certsDir := runCmd.String("certs-dir", defaultCerts, "Diretório de certificados mTLS")
+		stateDir := runCmd.String("state-dir", defaultState, "Diretório de estado e locks de segurança")
 		_ = runCmd.Parse(os.Args[2:])
 
 		executeRun(*serverFlag, *idFlag, *configFile, *certsDir, *stateDir)
@@ -119,6 +133,7 @@ func executeEnrollment(serverURL, token, certsDir, configFile string) {
 	_ = os.WriteFile(filepath.Join(certsDir, "client.key"), []byte(res.ClientKeyPEM), 0600)
 
 	// Salva configuração
+	_ = os.MkdirAll(filepath.Dir(configFile), 0700)
 	cfg := AgentConfigFile{
 		ServerURL: serverURL,
 		ServerID:  res.ServerID,
@@ -136,7 +151,27 @@ func executeEnrollment(serverURL, token, certsDir, configFile string) {
 func executeRun(serverURL, agentID, configFile, certsDir, stateDir string) {
 	// Carrega do arquivo se não informado por flag
 	if serverURL == "" || agentID == "" {
-		if data, err := os.ReadFile(configFile); err == nil {
+		data, err := os.ReadFile(configFile)
+		// Fallbacks automáticos para localizar o arquivo de configuração
+		if err != nil {
+			candidates := []string{
+				"/etc/fw-agent/config.json",
+				"./agent_config.json",
+			}
+			for _, candidate := range candidates {
+				if candidate == configFile {
+					continue
+				}
+				if cData, cErr := os.ReadFile(candidate); cErr == nil {
+					data = cData
+					err = nil
+					log.Printf("[INIT] Configuração carregada a partir do caminho alternativo: %s", candidate)
+					break
+				}
+			}
+		}
+
+		if err == nil {
 			var cfg AgentConfigFile
 			if json.Unmarshal(data, &cfg) == nil {
 				if serverURL == "" {
@@ -159,11 +194,33 @@ func executeRun(serverURL, agentID, configFile, certsDir, stateDir string) {
 	log.Printf("[INIT] Server URL: %s", serverURL)
 	log.Printf("[INIT] Agent ID:   %s", agentID)
 
-	// Carrega certificados se existirem
-	var tlsConf *tls.Config
+	// Verifica se os certificados existem no certsDir especificado ou em fallback
 	caCertFile := filepath.Join(certsDir, "ca.crt")
 	clientCertFile := filepath.Join(certsDir, "client.crt")
 	clientKeyFile := filepath.Join(certsDir, "client.key")
+
+	if _, err := os.Stat(clientCertFile); err != nil {
+		certFallbacks := []string{
+			"/etc/fw-agent/certs",
+			"./agent_certs",
+		}
+		for _, fb := range certFallbacks {
+			if fb == certsDir {
+				continue
+			}
+			if _, statErr := os.Stat(filepath.Join(fb, "client.crt")); statErr == nil {
+				certsDir = fb
+				caCertFile = filepath.Join(certsDir, "ca.crt")
+				clientCertFile = filepath.Join(certsDir, "client.crt")
+				clientKeyFile = filepath.Join(certsDir, "client.key")
+				log.Printf("[INIT] Certificados mTLS encontrados em diretório alternativo: %s", certsDir)
+				break
+			}
+		}
+	}
+
+	// Carrega certificados se existirem
+	var tlsConf *tls.Config
 
 	if _, err := os.Stat(caCertFile); err == nil {
 		caData, _ := os.ReadFile(caCertFile)
