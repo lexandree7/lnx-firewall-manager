@@ -12,13 +12,6 @@ ExecStart=/usr/bin/fw-server -listen :8443 -db /var/lib/fw-server/lfm.db -certs-
 Restart=on-failure
 RestartSec=5s
 
-# Hardening
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/var/lib/fw-server
-PrivateTmp=true
-
 LimitNOFILE=65536
 
 [Install]
