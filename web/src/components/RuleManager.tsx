@@ -415,14 +415,25 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
 
   const handleOpenEditModal = (rule: Rule) => {
     setEditingRuleId(rule.id);
+    let inIf = rule.in_interface || '';
+    let outIf = rule.out_interface || '';
+    if (!inIf && rule.raw_rule_text) {
+      const m = rule.raw_rule_text.match(/(?:^|\s)-i\s+([^\s]+)/);
+      if (m) inIf = m[1];
+    }
+    if (!outIf && rule.raw_rule_text) {
+      const m = rule.raw_rule_text.match(/(?:^|\s)-o\s+([^\s]+)/);
+      if (m) outIf = m[1];
+    }
+
     setRuleForm({
       protocol: rule.protocol || 'all',
       src_ip: rule.src_ip || '',
       dst_ip: rule.dst_ip || '',
       src_ports: rule.src_ports || '',
       dst_ports: rule.dst_ports || '',
-      in_interface: rule.in_interface || '',
-      out_interface: rule.out_interface || '',
+      in_interface: inIf,
+      out_interface: outIf,
       state_match: rule.state_match || '',
       tcp_flags: rule.tcp_flags || '',
       limit_rate: rule.limit_rate || '',
@@ -646,6 +657,17 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
           }
           if (tblObj.Rules) {
             tblObj.Rules.forEach((r: any, idx: number) => {
+              let inIface = r.InInterface || r.in_interface || undefined;
+              let outIface = r.OutInterface || r.out_interface || undefined;
+              if (!inIface && r.RawText) {
+                const m = r.RawText.match(/(?:^|\s)-i\s+([^\s]+)/);
+                if (m) inIface = m[1];
+              }
+              if (!outIface && r.RawText) {
+                const m = r.RawText.match(/(?:^|\s)-o\s+([^\s]+)/);
+                if (m) outIface = m[1];
+              }
+
               loadedRules.push({
                 id: `r_live_${tName}_${r.Chain}_${idx}_${Date.now()}`,
                 chain_id: `c_${r.Chain.toLowerCase()}`,
@@ -659,8 +681,8 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
                 dst_ip: r.DstIP || undefined,
                 src_ports: r.SrcPorts || undefined,
                 dst_ports: r.DstPorts || undefined,
-                in_interface: r.InInterface || undefined,
-                out_interface: r.OutInterface || undefined,
+                in_interface: inIface,
+                out_interface: outIface,
                 state_match: r.StateMatch || undefined,
                 tcp_flags: r.TCPFlags || undefined,
                 limit_rate: r.LimitRate || undefined,
@@ -982,6 +1004,7 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
                 <th className="px-3 py-3">{lang === 'pt' ? 'Ação (Target)' : 'Target'}</th>
                 <th className="px-3 py-3">{lang === 'pt' ? 'Proto' : 'Proto'}</th>
                 <th className="px-3 py-3">{lang === 'pt' ? 'Origem / Destino' : 'Src / Dst'}</th>
+                <th className="px-3 py-3">{lang === 'pt' ? 'Interfaces (In / Out)' : 'Interfaces (In / Out)'}</th>
                 <th className="px-3 py-3">{lang === 'pt' ? 'Portas (Src / Dst)' : 'Ports (Src / Dst)'}</th>
                 <th className="px-3 py-3">{lang === 'pt' ? 'Matches & IPSet' : 'Matches & IPSet'}</th>
                 <th className="px-3 py-3">{lang === 'pt' ? 'Comentário' : 'Comment'}</th>
@@ -992,7 +1015,7 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
             <tbody className="divide-y divide-zinc-800/60 font-mono text-xs">
               {visibleRules.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-12 text-center">
+                  <td colSpan={10} className="px-4 py-12 text-center">
                     <div className="flex flex-col items-center justify-center space-y-2">
                       <ShieldAlert className="w-10 h-10 text-zinc-600 mb-1" />
                       <div className="text-sm font-semibold text-zinc-300">
@@ -1085,6 +1108,32 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
                         </div>
                       </td>
 
+                      {/* Interfaces de Entrada (Origem) e Saída (Destino) */}
+                      <td className="px-3 py-3 text-zinc-300">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] text-zinc-500 uppercase font-bold">in:</span>
+                          {r.in_interface ? (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-mono text-[11px] font-semibold shadow-sm">
+                              <ArrowRightLeft className="w-2.5 h-2.5 text-cyan-400" />
+                              <span>{r.in_interface}</span>
+                            </span>
+                          ) : (
+                            <span className="text-zinc-600 font-mono text-[11px]">any</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <span className="text-[10px] text-zinc-500 uppercase font-bold">out:</span>
+                          {r.out_interface ? (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 font-mono text-[11px] font-semibold shadow-sm">
+                              <ArrowRightLeft className="w-2.5 h-2.5 text-indigo-400" />
+                              <span>{r.out_interface}</span>
+                            </span>
+                          ) : (
+                            <span className="text-zinc-600 font-mono text-[11px]">any</span>
+                          )}
+                        </div>
+                      </td>
+
                       {/* Portas de Origem e Destino */}
                       <td className="px-3 py-3 text-zinc-300">
                         {r.src_ports && (
@@ -1111,8 +1160,6 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
                           </div>
                         )}
                         {r.state_match && <div className="text-[11px]">ctstate: {r.state_match}</div>}
-                        {r.in_interface && <div className="text-[11px] text-zinc-300">in: {r.in_interface}</div>}
-                        {r.out_interface && <div className="text-[11px] text-zinc-300">out: {r.out_interface}</div>}
                         {r.tcp_flags && <div className="text-[10px] text-amber-400/80">tcp-flags: {r.tcp_flags}</div>}
                         {r.limit_rate && <div className="text-[10px] text-sky-300">limit: {r.limit_rate}</div>}
                       </td>
@@ -1498,22 +1545,34 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
               </div>
 
               <div>
-                <label className="block text-zinc-400 mb-1">Interface Entrada (-i) / Saída (-o)</label>
+                <label className="block text-xs font-mono text-zinc-300 mb-1">
+                  {lang === 'pt' ? 'Interfaces de Origem (-i) e Destino (-o)' : 'Interfaces: In (-i) / Out (-o)'}
+                </label>
                 <div className="grid grid-cols-2 gap-2">
-                  <input
-                    type="text"
-                    value={ruleForm.in_interface}
-                    onChange={(e) => setRuleForm({ ...ruleForm, in_interface: e.target.value })}
-                    placeholder="in: eth0"
-                    className="w-full bg-black border border-zinc-800 rounded-lg p-2 text-zinc-200 outline-none focus:border-amber-500"
-                  />
-                  <input
-                    type="text"
-                    value={ruleForm.out_interface}
-                    onChange={(e) => setRuleForm({ ...ruleForm, out_interface: e.target.value })}
-                    placeholder="out: eth1"
-                    className="w-full bg-black border border-zinc-800 rounded-lg p-2 text-zinc-200 outline-none focus:border-amber-500"
-                  />
+                  <div>
+                    <span className="text-[10px] text-zinc-500 font-mono block mb-1">
+                      {lang === 'pt' ? 'Entrada / Origem (-i):' : 'In / Source (-i):'}
+                    </span>
+                    <input
+                      type="text"
+                      value={ruleForm.in_interface}
+                      onChange={(e) => setRuleForm({ ...ruleForm, in_interface: e.target.value })}
+                      placeholder="Ex: eth0, lo, ens192"
+                      className="w-full bg-black border border-zinc-800 rounded-lg p-2 text-xs font-mono text-zinc-200 outline-none focus:border-amber-500"
+                    />
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-zinc-500 font-mono block mb-1">
+                      {lang === 'pt' ? 'Saída / Destino (-o):' : 'Out / Destination (-o):'}
+                    </span>
+                    <input
+                      type="text"
+                      value={ruleForm.out_interface}
+                      onChange={(e) => setRuleForm({ ...ruleForm, out_interface: e.target.value })}
+                      placeholder="Ex: eth1, tun0, wg0"
+                      className="w-full bg-black border border-zinc-800 rounded-lg p-2 text-xs font-mono text-zinc-200 outline-none focus:border-amber-500"
+                    />
+                  </div>
                 </div>
               </div>
 
