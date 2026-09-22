@@ -193,6 +193,7 @@ func (h *Hub) handleHello(conn *websocket.Conn, msg *AgentInboundMessage, remote
 		IptablesBackend:   msg.Backend,
 		IPv6Supported:     msg.IPv6,
 		LastCanonicalHash: msg.RulesHash,
+		NetworkInterfaces: msg.Interfaces,
 	}
 	_ = h.db.UpsertServer(srv)
 
@@ -237,6 +238,7 @@ func (h *Hub) handleHeartbeat(s *AgentSession, msg *AgentInboundMessage) {
 	}
 	if len(msg.Interfaces) > 0 {
 		s.Interfaces = msg.Interfaces
+		_ = h.db.UpdateServerInterfaces(s.ServerID, msg.Interfaces)
 	}
 	h.mu.Unlock()
 
@@ -445,15 +447,26 @@ func (h *Hub) GetLatestRules(serverID string) (string, string) {
 	return sess.LastRulesV4, sess.LastRulesV6
 }
 
-// GetLatestInterfaces retorna as interfaces de rede do servidor
+// GetLatestInterfaces retorna as interfaces de rede do servidor (memória ou banco)
 func (h *Hub) GetLatestInterfaces(serverID string) []models.NetworkInterface {
 	h.mu.RLock()
-	defer h.mu.RUnlock()
 	sess, ok := h.agents[serverID]
-	if !ok || sess == nil || len(sess.Interfaces) == 0 {
-		return nil
+	var inMem []models.NetworkInterface
+	if ok && sess != nil && len(sess.Interfaces) > 0 {
+		inMem = sess.Interfaces
 	}
-	return sess.Interfaces
+	h.mu.RUnlock()
+
+	if len(inMem) > 0 {
+		return inMem
+	}
+
+	// Consulta do banco de dados (persistência)
+	if srv, err := h.db.GetServerByID(serverID); err == nil && srv != nil && len(srv.NetworkInterfaces) > 0 {
+		return srv.NetworkInterfaces
+	}
+
+	return nil
 }
 
 func (h *Hub) heartbeatChecker() {

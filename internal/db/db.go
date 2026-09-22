@@ -247,7 +247,12 @@ func (d *DB) migrate() error {
 	`
 
 	_, err := d.db.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+	// Migrações incrementais seguras
+	_, _ = d.db.Exec("ALTER TABLE servers ADD COLUMN network_interfaces TEXT;")
+	return nil
 }
 
 // EnsureRootUser garante que o usuário root existe
@@ -604,10 +609,17 @@ func (d *DB) UpsertServer(s *models.Server) error {
 		driftInt = 1
 	}
 
+	ifacesJSON := ""
+	if len(s.NetworkInterfaces) > 0 {
+		if b, err := json.Marshal(s.NetworkInterfaces); err == nil {
+			ifacesJSON = string(b)
+		}
+	}
+
 	_, err := d.db.Exec(`
 		INSERT INTO servers (id, hostname, ip_address, group_id, status, agent_version, os_distro, kernel_version,
-		                     iptables_backend, ipv6_supported, drift_detected, last_canonical_hash, last_seen_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		                     iptables_backend, ipv6_supported, drift_detected, last_canonical_hash, network_interfaces, last_seen_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		ON CONFLICT(id) DO UPDATE SET
 			hostname = excluded.hostname,
 			ip_address = excluded.ip_address,
@@ -619,10 +631,11 @@ func (d *DB) UpsertServer(s *models.Server) error {
 			ipv6_supported = excluded.ipv6_supported,
 			drift_detected = excluded.drift_detected,
 			last_canonical_hash = COALESCE(excluded.last_canonical_hash, servers.last_canonical_hash),
+			network_interfaces = CASE WHEN excluded.network_interfaces != '' THEN excluded.network_interfaces ELSE servers.network_interfaces END,
 			last_seen_at = CURRENT_TIMESTAMP,
 			updated_at = CURRENT_TIMESTAMP
 	`, s.ID, s.Hostname, s.IPAddress, s.GroupID, s.Status, s.AgentVersion, s.OSDistro, s.KernelVersion,
-		s.IptablesBackend, ipv6Int, driftInt, s.LastCanonicalHash)
+		s.IptablesBackend, ipv6Int, driftInt, s.LastCanonicalHash, ifacesJSON)
 	if err != nil {
 		return err
 	}
@@ -637,6 +650,19 @@ func (d *DB) UpsertServer(s *models.Server) error {
 	return nil
 }
 
+// UpdateServerInterfaces persiste atomicamente a lista de interfaces do servidor
+func (d *DB) UpdateServerInterfaces(id string, ifaces []models.NetworkInterface) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	b, err := json.Marshal(ifaces)
+	if err != nil {
+		return err
+	}
+	_, err = d.db.Exec("UPDATE servers SET network_interfaces = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", string(b), id)
+	return err
+}
+
 // UpdateServerStatus atualiza apenas status e last_seen
 func (d *DB) UpdateServerStatus(id, status string) error {
 	_, err := d.db.Exec("UPDATE servers SET status = ?, last_seen_at = CURRENT_TIMESTAMP WHERE id = ?", status, id)
@@ -648,7 +674,8 @@ func (d *DB) ListServers() ([]*models.Server, error) {
 	rows, err := d.db.Query(`
 		SELECT s.id, s.hostname, s.ip_address, s.group_id, COALESCE(g.name, '') as group_name,
 		       s.status, s.agent_version, s.os_distro, s.kernel_version, s.iptables_backend,
-		       s.ipv6_supported, s.drift_detected, s.last_canonical_hash, s.last_seen_at, s.created_at, s.updated_at
+		       s.ipv6_supported, s.drift_detected, s.last_canonical_hash, s.last_seen_at,
+		       COALESCE(s.network_interfaces, '') as network_interfaces, s.created_at, s.updated_at
 		FROM servers s
 		LEFT JOIN server_groups g ON s.group_id = g.id
 		ORDER BY s.hostname ASC
@@ -661,14 +688,14 @@ func (d *DB) ListServers() ([]*models.Server, error) {
 	servers := make([]*models.Server, 0)
 	for rows.Next() {
 		var s models.Server
-		var grpID, hash sql.NullString
+		var grpID, hash, ifacesJSON sql.NullString
 		var ipv6Int, driftInt int
 		var lastSeen sql.NullTime
 
 		err := rows.Scan(
 			&s.ID, &s.Hostname, &s.IPAddress, &grpID, &s.GroupName,
 			&s.Status, &s.AgentVersion, &s.OSDistro, &s.KernelVersion, &s.IptablesBackend,
-			&ipv6Int, &driftInt, &hash, &lastSeen, &s.CreatedAt, &s.UpdatedAt,
+			&ipv6Int, &driftInt, &hash, &lastSeen, &ifacesJSON, &s.CreatedAt, &s.UpdatedAt,
 		)
 		if err != nil {
 			return nil, err
@@ -682,6 +709,9 @@ func (d *DB) ListServers() ([]*models.Server, error) {
 		s.DriftDetected = driftInt == 1
 		if lastSeen.Valid {
 			s.LastSeenAt = &lastSeen.Time
+		}
+		if ifacesJSON.Valid && ifacesJSON.String != "" {
+			_ = json.Unmarshal([]byte(ifacesJSON.String), &s.NetworkInterfaces)
 		}
 
 		servers = append(servers, &s)

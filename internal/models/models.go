@@ -50,6 +50,7 @@ type Server struct {
 	LastCanonicalHash string     `json:"last_canonical_hash,omitempty"`
 	Tags              []string   `json:"tags"`
 	LastSeenAt        *time.Time `json:"last_seen_at,omitempty"`
+	NetworkInterfaces []NetworkInterface `json:"network_interfaces,omitempty"`
 	CreatedAt         time.Time  `json:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at"`
 }

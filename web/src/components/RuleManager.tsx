@@ -104,32 +104,7 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
   const [isModifiedLocally, setIsModifiedLocally] = useState(false);
 
   // Painel lateral e estado de interfaces de rede do servidor ativo
-  const [serverInterfaces, setServerInterfaces] = useState<NetworkInterface[]>([
-    {
-      name: 'lo',
-      mac: '00:00:00:00:00:00',
-      ips: ['127.0.0.1/8', '::1/128'],
-      flags: 'up|loopback',
-      is_up: true,
-      is_loopback: true,
-    },
-    {
-      name: 'eth0',
-      mac: '52:54:00:12:34:56',
-      ips: ['192.168.1.150/24', 'fe80::5054:ff:fe12:3456/64'],
-      flags: 'up|broadcast|multicast',
-      is_up: true,
-      is_loopback: false,
-    },
-    {
-      name: 'eth1',
-      mac: '52:54:00:9a:bc:de',
-      ips: ['10.0.0.1/24'],
-      flags: 'up|broadcast|multicast',
-      is_up: true,
-      is_loopback: false,
-    },
-  ]);
+  const [serverInterfaces, setServerInterfaces] = useState<NetworkInterface[]>([]);
   const [showInterfacesSidebar, setShowInterfacesSidebar] = useState<boolean>(() => {
     const saved = localStorage.getItem('lfm_show_ifaces_panel');
     return saved !== null ? saved === 'true' : true;
@@ -422,15 +397,17 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
   };
 
   const reloadInterfaces = async (targetId: string) => {
-    if (!targetId || targetId === 'ALL') return;
+    if (!targetId || targetId === 'ALL') {
+      setServerInterfaces([]);
+      return;
+    }
     setIsLoadingInterfaces(true);
     try {
       const ifaces = await api.getServerInterfaces(targetId);
-      if (ifaces && ifaces.length > 0) {
-        setServerInterfaces(ifaces);
-      }
+      setServerInterfaces(Array.isArray(ifaces) ? ifaces : []);
     } catch (err) {
       console.warn('Erro ao atualizar interfaces:', err);
+      setServerInterfaces([]);
     } finally {
       setIsLoadingInterfaces(false);
     }
@@ -758,14 +735,12 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
     setIsLoadingLiveRules(true);
     try {
       const data = await api.getServerRules(targetId);
-      if (data && data.interfaces && Array.isArray(data.interfaces) && data.interfaces.length > 0) {
+      if (data && Array.isArray(data.interfaces)) {
         setServerInterfaces(data.interfaces);
       } else {
         try {
           const ifaces = await api.getServerInterfaces(targetId);
-          if (ifaces && ifaces.length > 0) {
-            setServerInterfaces(ifaces);
-          }
+          setServerInterfaces(Array.isArray(ifaces) ? ifaces : []);
         } catch {
           // fallback silencioso caso ainda não esteja disponível
         }
@@ -872,11 +847,38 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
 
   // Sincroniza automaticamente com o nó sempre que o servidor for selecionado ou ocorrer commit/evento
   useEffect(() => {
+    let isCancelled = false;
     if (selectedServerId && selectedServerId !== 'ALL') {
       loadLiveRules(selectedServerId, true);
+
+      // Carrega interfaces de rede de forma dedicada para este servidor
+      setIsLoadingInterfaces(true);
+      api.getServerInterfaces(selectedServerId)
+        .then((ifaces) => {
+          if (!isCancelled) {
+            setServerInterfaces(Array.isArray(ifaces) ? ifaces : []);
+          }
+        })
+        .catch((err) => {
+          console.warn('Erro ao carregar interfaces do servidor:', err);
+          if (!isCancelled) {
+            setServerInterfaces([]);
+          }
+        })
+        .finally(() => {
+          if (!isCancelled) {
+            setIsLoadingInterfaces(false);
+          }
+        });
     } else {
       setIsLiveSynced(false);
+      setServerInterfaces([]);
+      setIsLoadingInterfaces(false);
     }
+
+    return () => {
+      isCancelled = true;
+    };
   }, [selectedServerId, rulesUpdateKey]);
 
   const targetLabel =
@@ -1460,7 +1462,7 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
               </h3>
               <p className="text-[11px] text-zinc-400 font-mono truncate max-w-[180px]">
                 {selectedServerId === 'ALL'
-                  ? (lang === 'pt' ? 'Host Local / Teste' : 'Local / Test Host')
+                  ? (lang === 'pt' ? 'Todos os Servidores (Lote)' : 'All Servers (Batch)')
                   : (safeServers.find((s) => s.id === selectedServerId)?.hostname || selectedServerId)}
               </p>
             </div>
@@ -1488,46 +1490,105 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
         </div>
 
         {/* Barra de Busca de Interfaces */}
-        <div className="relative">
-          <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-2.5 top-2.5" />
-          <input
-            type="text"
-            value={interfaceSearch}
-            onChange={(e) => setInterfaceSearch(e.target.value)}
-            placeholder={lang === 'pt' ? 'Filtrar por nome, MAC ou IP...' : 'Filter by name, MAC or IP...'}
-            className="w-full bg-black border border-zinc-800 rounded-lg pl-8 pr-7 py-1.5 text-xs text-zinc-200 outline-none placeholder:text-zinc-600 focus:border-amber-500 transition font-mono"
-          />
-          {interfaceSearch && (
-            <button
-              onClick={() => setInterfaceSearch('')}
-              className="absolute right-2 top-2 text-zinc-500 hover:text-zinc-300"
-              title={lang === 'pt' ? 'Limpar busca' : 'Clear search'}
-            >
-              <X className="w-3 h-3" />
-            </button>
-          )}
-        </div>
+        {selectedServerId !== 'ALL' && (
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-2.5 top-2.5" />
+            <input
+              type="text"
+              value={interfaceSearch}
+              onChange={(e) => setInterfaceSearch(e.target.value)}
+              placeholder={lang === 'pt' ? 'Filtrar por nome, MAC ou IP...' : 'Filter by name, MAC or IP...'}
+              className="w-full bg-black border border-zinc-800 rounded-lg pl-8 pr-7 py-1.5 text-xs text-zinc-200 outline-none placeholder:text-zinc-600 focus:border-amber-500 transition font-mono"
+            />
+            {interfaceSearch && (
+              <button
+                onClick={() => setInterfaceSearch('')}
+                className="absolute right-2 top-2 text-zinc-500 hover:text-zinc-300"
+                title={lang === 'pt' ? 'Limpar busca' : 'Clear search'}
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Dica de Utilização Rápida */}
-        <div className="text-[11px] text-zinc-500 flex items-center gap-1.5 font-mono bg-zinc-900/50 p-2 rounded-lg border border-zinc-800/60">
-          <span className="text-amber-400 font-bold">Dica:</span>
-          <span>
-            {lang === 'pt'
-              ? 'Clique em In (-i) ou Out (-o) para preencher a regra.'
-              : 'Click In (-i) or Out (-o) to auto-fill rule.'}
-          </span>
-        </div>
-
-        {/* Lista de Cards de Interfaces */}
-        <div className="space-y-3 max-h-[620px] overflow-y-auto pr-1">
-          {filteredInterfaces.length === 0 ? (
-            <div className="p-6 text-center text-xs text-zinc-500 border border-dashed border-zinc-800 rounded-xl">
+        {selectedServerId !== 'ALL' && serverInterfaces.length > 0 && (
+          <div className="text-[11px] text-zinc-500 flex items-center gap-1.5 font-mono bg-zinc-900/50 p-2 rounded-lg border border-zinc-800/60">
+            <span className="text-amber-400 font-bold">Dica:</span>
+            <span>
               {lang === 'pt'
-                ? 'Nenhuma interface de rede correspondente.'
-                : 'No matching network interfaces.'}
+                ? 'Clique em In (-i) ou Out (-o) para preencher a regra.'
+                : 'Click In (-i) or Out (-o) to auto-fill rule.'}
+            </span>
+          </div>
+        )}
+
+        {/* Conteúdo Dinâmico do Painel de Interfaces */}
+        {selectedServerId === 'ALL' ? (
+          <div className="p-4 bg-zinc-900/60 border border-zinc-800 rounded-xl space-y-3">
+            <div className="flex items-center gap-2 text-xs font-semibold text-amber-400">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>{lang === 'pt' ? 'Modo em Lote (Todos os Servidores)' : 'Batch Mode (All Servers)'}</span>
             </div>
-          ) : (
-            filteredInterfaces.map((iface) => {
+            <p className="text-xs text-zinc-400">
+              {lang === 'pt'
+                ? 'Para inspecionar interfaces, MACs e IPs de um firewall específico, selecione um nó no seletor ou clique abaixo:'
+                : 'To inspect MAC and IP interfaces of a specific firewall, select a node above or click below:'}
+            </p>
+            {safeServers.length > 0 && (
+              <div className="space-y-1.5 pt-1">
+                {safeServers.map((s) => (
+                  <button
+                    key={s.id}
+                    onClick={() => onSelectServer?.(s.id)}
+                    className="w-full px-3 py-2 rounded-lg bg-black hover:bg-zinc-800/80 border border-zinc-800 hover:border-amber-500/40 text-left text-xs font-mono text-zinc-200 transition flex items-center justify-between group"
+                  >
+                    <span className="flex items-center gap-2 truncate">
+                      <span className={s.status === 'online' ? 'text-amber-400' : 'text-zinc-600'}>●</span>
+                      <span className="font-bold truncate">{s.hostname}</span>
+                    </span>
+                    <span className="text-[11px] text-zinc-500 group-hover:text-amber-300 font-mono">
+                      {s.ip_address}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : isLoadingInterfaces ? (
+          <div className="p-8 text-center text-xs text-zinc-400 flex flex-col items-center justify-center gap-2.5 font-mono">
+            <RefreshCw className="w-5 h-5 animate-spin text-amber-400" />
+            <span>{lang === 'pt' ? 'Carregando interfaces do servidor...' : 'Loading server interfaces...'}</span>
+          </div>
+        ) : filteredInterfaces.length === 0 ? (
+          <div className="p-6 text-center text-xs text-zinc-400 border border-dashed border-zinc-800 rounded-xl space-y-2.5">
+            <Network className="w-8 h-8 text-zinc-600 mx-auto" />
+            <div className="font-semibold text-zinc-300">
+              {interfaceSearch.trim()
+                ? (lang === 'pt' ? 'Nenhuma interface corresponde à busca.' : 'No matching network interfaces.')
+                : (lang === 'pt' ? 'Nenhuma interface reportada ainda' : 'No interfaces reported yet')}
+            </div>
+            {!interfaceSearch.trim() && (
+              <>
+                <p className="text-[11px] text-zinc-500 max-w-xs mx-auto">
+                  {lang === 'pt'
+                    ? 'Aguardando telemetria do agente fw-agent ou nó desconectado. Certifique-se de que o fw-agent foi atualizado e reiniciado neste host.'
+                    : 'Waiting for fw-agent heartbeat or node is offline. Ensure fw-agent is updated and restarted on this host.'}
+                </p>
+                <button
+                  onClick={() => reloadInterfaces(selectedServerId)}
+                  className="mt-2 px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-amber-400 border border-zinc-800 text-xs font-mono transition inline-flex items-center gap-1.5"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>{lang === 'pt' ? 'Consultar Novamente' : 'Retry Now'}</span>
+                </button>
+              </>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-3 max-h-[620px] overflow-y-auto pr-1">
+            {filteredInterfaces.map((iface) => {
               const isUp = iface.is_up;
               const isLoopback = iface.is_loopback;
 
@@ -1683,9 +1744,9 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
                   </div>
                 </div>
               );
-            })
-          )}
-        </div>
+            })}
+          </div>
+        )}
       </aside>
     )}
   </div>

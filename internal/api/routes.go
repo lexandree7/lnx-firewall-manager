@@ -497,8 +497,13 @@ func (api *ServerAPI) handleGetServerRules(w http.ResponseWriter, r *http.Reques
 	}
 
 	interfaces := api.hub.GetLatestInterfaces(id)
-	if len(interfaces) == 0 {
-		// Fallback local se o servidor/agente estiverem no mesmo host ou antes do heartbeat
+	if interfaces == nil {
+		interfaces = make([]models.NetworkInterface, 0)
+	}
+
+	// Fallback local exclusivamente se o nó for a própria máquina local (localhost / 127.0.0.1)
+	isLocalNode := srv.IPAddress == "127.0.0.1" || strings.HasPrefix(srv.IPAddress, "127.0.0.1:") || srv.IPAddress == "::1" || strings.EqualFold(srv.Hostname, "localhost")
+	if len(interfaces) == 0 && isLocalNode {
 		if ifaces, err := net.Interfaces(); err == nil {
 			for _, iface := range ifaces {
 				ni := models.NetworkInterface{
@@ -534,8 +539,15 @@ func (api *ServerAPI) handleGetServerRules(w http.ResponseWriter, r *http.Reques
 
 func (api *ServerAPI) handleGetServerInterfaces(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	srv, _ := api.db.GetServerByID(id)
+
 	interfaces := api.hub.GetLatestInterfaces(id)
-	if len(interfaces) == 0 {
+	if interfaces == nil {
+		interfaces = make([]models.NetworkInterface, 0)
+	}
+
+	isLocalNode := srv != nil && (srv.IPAddress == "127.0.0.1" || strings.HasPrefix(srv.IPAddress, "127.0.0.1:") || srv.IPAddress == "::1" || strings.EqualFold(srv.Hostname, "localhost"))
+	if len(interfaces) == 0 && isLocalNode {
 		if ifaces, err := net.Interfaces(); err == nil {
 			for _, iface := range ifaces {
 				ni := models.NetworkInterface{
