@@ -17,26 +17,32 @@ import {
   X,
   Eye,
   EyeOff,
-  Server
+  Server,
+  Palette,
+  Sparkles
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { api } from '../api/client';
-import { User, UserSession, OIDCConfig, TOTPSetupData } from '../types';
+import { User, UserSession, OIDCConfig, TOTPSetupData, ThemeId, AVAILABLE_THEMES } from '../types';
 
 interface UserManagementProps {
   currentUser: User;
   onUpdateUser: (user: User) => void;
   lang: 'pt' | 'en';
   onClose: () => void;
+  currentTheme?: ThemeId;
+  onSelectTheme?: (theme: ThemeId) => void;
 }
 
-type TabType = 'profile' | '2fa' | 'sessions' | 'oidc';
+type TabType = 'profile' | '2fa' | 'sessions' | 'oidc' | 'theme';
 
 export const UserManagement: React.FC<UserManagementProps> = ({
   currentUser,
   onUpdateUser,
   lang,
   onClose,
+  currentTheme = 'slate',
+  onSelectTheme,
 }) => {
   const [activeTab, setActiveTab] = useState<TabType>('profile');
 
@@ -338,6 +344,18 @@ export const UserManagement: React.FC<UserManagementProps> = ({
               <span>{lang === 'pt' ? 'OpenID SSO (Admin)' : 'OpenID SSO (Admin)'}</span>
             </button>
           )}
+
+          <button
+            onClick={() => setActiveTab('theme')}
+            className={`px-4 py-3 font-medium border-b-2 transition flex items-center gap-2 whitespace-nowrap ${
+              activeTab === 'theme'
+                ? 'border-amber-500 text-amber-400'
+                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            <Palette className="w-4 h-4 text-amber-400" />
+            <span>{lang === 'pt' ? 'Aparência & Temas' : 'Appearance & Themes'}</span>
+          </button>
         </div>
 
         {/* Modal Body */}
@@ -440,10 +458,10 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                   <button
                     type="submit"
                     disabled={savingPassword}
-                    className="bg-amber-600 hover:bg-amber-500 text-black font-bold px-4 py-2 rounded-lg text-xs transition disabled:opacity-50 flex items-center gap-2 font-mono"
+                    className="bg-amber-600 hover:bg-amber-500 text-themebtn font-semibold px-4 py-2 rounded-lg text-xs transition disabled:opacity-50 flex items-center gap-2 font-mono"
                   >
                     {savingPassword ? (
-                      <span className="inline-block w-3 h-3 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                      <span className="inline-block w-3 h-3 border-2 border-themebtn border-t-transparent rounded-full animate-spin" />
                     ) : (
                       <span>{lang === 'pt' ? 'Atualizar Senha' : 'Update Password'}</span>
                     )}
@@ -544,7 +562,7 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                       <button
                         onClick={handleStartTOTP}
                         disabled={totpLoading}
-                        className="bg-amber-600 hover:bg-amber-500 text-black font-bold px-4 py-2 rounded-lg text-xs font-mono transition"
+                        className="bg-amber-600 hover:bg-amber-500 text-themebtn font-semibold px-4 py-2 rounded-lg text-xs font-mono transition"
                       >
                         {lang === 'pt' ? 'Configurar Autenticação em 2 Etapas' : 'Setup Two-Factor Authentication'}
                       </button>
@@ -604,7 +622,7 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                           <button
                             type="submit"
                             disabled={totpLoading || totpCode.length !== 6}
-                            className="w-full sm:w-auto bg-amber-600 hover:bg-amber-500 text-black font-bold px-4 py-2 rounded-lg text-xs font-mono transition disabled:opacity-50"
+                            className="w-full sm:w-auto bg-amber-600 hover:bg-amber-500 text-themebtn font-semibold px-4 py-2 rounded-lg text-xs font-mono transition disabled:opacity-50"
                           >
                             {lang === 'pt' ? 'Ativar 2FA' : 'Activate 2FA'}
                           </button>
@@ -862,12 +880,124 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                   <button
                     type="submit"
                     disabled={oidcLoading}
-                    className="bg-amber-600 hover:bg-amber-500 text-black font-bold px-4 py-2.5 rounded-lg text-xs font-mono transition disabled:opacity-50"
+                    className="bg-amber-600 hover:bg-amber-500 text-themebtn font-semibold px-4 py-2.5 rounded-lg text-xs font-mono transition disabled:opacity-50"
                   >
                     {oidcLoading ? 'Salvando...' : (lang === 'pt' ? 'Salvar Configurações OIDC' : 'Save OIDC Configuration')}
                   </button>
                 </div>
               </form>
+            </div>
+          )}
+
+          {/* TAB 5: APPEARANCE & THEMES */}
+          {activeTab === 'theme' && (
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Palette className="w-4 h-4 text-amber-500" />
+                  <span>{lang === 'pt' ? 'Paleta de Cores e Aparência' : 'Color Palette & Appearance'}</span>
+                </h3>
+                <p className="text-xs text-zinc-400 mt-1">
+                  {lang === 'pt'
+                    ? 'Escolha entre temas modernos e foscos com baixa saturação visual, projetados para reduzir o cansaço dos olhos durante longos períodos de monitoramento de firewall.'
+                    : 'Choose between modern, low-saturation matte themes engineered to reduce eye strain during prolonged firewall monitoring operations.'}
+                </p>
+              </div>
+
+              {/* Theme Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {AVAILABLE_THEMES.map((t) => {
+                  const isActive = (currentTheme || 'slate') === t.id;
+                  return (
+                    <div
+                      key={t.id}
+                      onClick={() => onSelectTheme && onSelectTheme(t.id)}
+                      className={`relative rounded-xl border p-4 cursor-pointer transition-all duration-200 flex flex-col justify-between ${
+                        isActive
+                          ? 'border-amber-500/80 bg-zinc-900/90 ring-1 ring-amber-500/40 shadow-lg shadow-black/60'
+                          : 'border-zinc-800/80 bg-zinc-900/30 hover:border-zinc-700 hover:bg-zinc-900/60'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-2.5">
+                            {/* Color Swatch Circle */}
+                            <div
+                              className="w-7 h-7 rounded-lg border border-white/20 shadow-md flex items-center justify-center"
+                              style={{ backgroundColor: t.previewColor }}
+                            >
+                              <Sparkles className="w-3.5 h-3.5 text-white/90" />
+                            </div>
+                            <div>
+                              <div className="text-sm font-bold text-white tracking-tight">
+                                {lang === 'pt' ? t.namePt : t.nameEn}
+                              </div>
+                              <div className="text-[10px] font-mono text-zinc-400 uppercase">
+                                theme: {t.id}
+                              </div>
+                            </div>
+                          </div>
+
+                          {isActive ? (
+                            <span className="flex items-center gap-1 text-[11px] font-mono px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold">
+                              <CheckCircle2 className="w-3 h-3" />
+                              <span>{lang === 'pt' ? 'Ativo' : 'Active'}</span>
+                            </span>
+                          ) : (
+                            <span className="text-[11px] font-mono px-2 py-0.5 rounded text-zinc-500 border border-zinc-800">
+                              {lang === 'pt' ? 'Disponível' : 'Available'}
+                            </span>
+                          )}
+                        </div>
+
+                        <p className="text-xs text-zinc-400 mb-4 leading-relaxed">
+                          {lang === 'pt' ? t.descriptionPt : t.descriptionEn}
+                        </p>
+                      </div>
+
+                      {/* Action Bar */}
+                      <div className="pt-3 border-t border-zinc-800/60 flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className="w-3.5 h-3.5 rounded-full border border-black/40"
+                            style={{ backgroundColor: t.previewColor }}
+                            title="Accent"
+                          />
+                          <span className="w-3.5 h-3.5 rounded-full border border-zinc-700 bg-zinc-900" title="Surface" />
+                          <span className="w-3.5 h-3.5 rounded-full border border-zinc-800 bg-black" title="Base" />
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (onSelectTheme) onSelectTheme(t.id);
+                          }}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-mono font-medium transition ${
+                            isActive
+                              ? 'bg-amber-600/30 text-amber-300 border border-amber-500/40 cursor-default'
+                              : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white border border-zinc-700'
+                          }`}
+                        >
+                          {isActive
+                            ? (lang === 'pt' ? '✓ Selecionado' : '✓ Selected')
+                            : (lang === 'pt' ? 'Aplicar Tema' : 'Apply Theme')}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Info Note */}
+              <div className="p-4 rounded-xl bg-zinc-900/50 border border-zinc-800/80 text-xs text-zinc-400 flex items-center gap-3">
+                <div className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+                <span>
+                  {lang === 'pt'
+                    ? 'A preferência de tema é gravada instantaneamente no seu navegador local e se aplica a todo o painel (servidores, regras, ipsets, backups e auditoria).'
+                    : 'Theme preference is saved instantly in your local browser and automatically applies across all dashboard modules (servers, rules, ipsets, backups, and audit).'}
+                </span>
+              </div>
             </div>
           )}
         </div>

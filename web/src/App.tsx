@@ -7,7 +7,7 @@ import { BackupManager } from './components/BackupManager';
 import { AuditView } from './components/AuditView';
 import { Login } from './components/Login';
 import { UserManagement } from './components/UserManagement';
-import { Server, RuleCounterSample, User } from './types';
+import { Server, RuleCounterSample, User, ThemeId } from './types';
 import { api } from './api/client';
 import { Shield } from 'lucide-react';
 
@@ -16,6 +16,16 @@ export const App: React.FC = () => {
   const [isCheckingAuth, setIsCheckingAuth] = useState<boolean>(true);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [showUserModal, setShowUserModal] = useState<boolean>(false);
+
+  const [theme, setTheme] = useState<ThemeId>(() => {
+    const saved = localStorage.getItem('lfm_theme') as ThemeId;
+    return saved && ['slate', 'ochre', 'sage', 'zinc'].includes(saved) ? saved : 'slate';
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('lfm_theme', theme);
+  }, [theme]);
 
   const [servers, setServers] = useState<Server[]>([]);
   const [selectedServerId, setSelectedServerId] = useState<string>(() => {
@@ -212,7 +222,7 @@ export const App: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-black text-zinc-100 flex flex-col selection:bg-amber-500/30 selection:text-amber-200">
+    <div className="min-h-screen bg-[var(--theme-bg-base,#0a0c10)] text-zinc-100 flex flex-col selection:bg-amber-500/30 selection:text-amber-200 transition-colors duration-300">
       <Navbar
         servers={servers}
         selectedServerId={selectedServerId}
@@ -226,6 +236,8 @@ export const App: React.FC = () => {
         currentUser={currentUser}
         onOpenUserManagement={() => setShowUserModal(true)}
         onLogout={handleLogout}
+        currentTheme={theme}
+        onSelectTheme={setTheme}
       />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6">
@@ -271,6 +283,8 @@ export const App: React.FC = () => {
           onUpdateUser={(updated) => setCurrentUser(updated)}
           lang={lang}
           onClose={() => setShowUserModal(false)}
+          currentTheme={theme}
+          onSelectTheme={setTheme}
         />
       )}
 

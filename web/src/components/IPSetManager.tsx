@@ -532,7 +532,7 @@ export const IPSetManager: React.FC<IPSetManagerProps> = ({
                     disabled={savingEntries || !hasUnsavedChanges}
                     className={`px-3.5 py-1.5 rounded-lg text-xs font-bold font-mono flex items-center gap-1.5 transition ${
                       hasUnsavedChanges
-                        ? 'bg-amber-600 hover:bg-amber-500 text-black shadow-lg shadow-amber-950/50 animate-pulse'
+                        ? 'bg-amber-600 hover:bg-amber-500 text-themebtn shadow-lg shadow-amber-950/50 animate-pulse'
                         : 'bg-zinc-900 border border-zinc-800 text-zinc-500 cursor-not-allowed'
                     }`}
                   >
@@ -658,7 +658,7 @@ export const IPSetManager: React.FC<IPSetManagerProps> = ({
               <button
                 type="submit"
                 disabled={!newEntryInput.trim()}
-                className="bg-amber-600 hover:bg-amber-500 text-black font-bold px-4 py-2 rounded-lg text-xs font-mono flex items-center gap-1.5 transition disabled:opacity-40 shadow-md shadow-amber-950/30 shrink-0"
+                className="bg-amber-600 hover:bg-amber-500 text-themebtn font-semibold px-4 py-2 rounded-lg text-xs font-mono flex items-center gap-1.5 transition disabled:opacity-40 shadow-md shadow-amber-950/30 shrink-0"
               >
                 <Plus className="w-4 h-4 stroke-[2.5]" />
                 <span>{lang === 'pt' ? 'Adicionar à Lista' : 'Add to List'}</span>
@@ -726,7 +726,7 @@ export const IPSetManager: React.FC<IPSetManagerProps> = ({
                           <button
                             type="button"
                             onClick={() => handleSaveEdit(originalIdx)}
-                            className="p-1 rounded bg-amber-600 hover:bg-amber-500 text-black"
+                            className="p-1 rounded bg-amber-600 hover:bg-amber-500 text-themebtn"
                             title="Salvar"
                           >
                             <Check className="w-3.5 h-3.5 stroke-[2.5]" />
@@ -863,7 +863,7 @@ export const IPSetManager: React.FC<IPSetManagerProps> = ({
               <button
                 type="button"
                 onClick={() => setShowBlockedModal(false)}
-                className="bg-amber-600 hover:bg-amber-500 text-black font-bold px-4 py-2 rounded-lg text-xs font-mono transition"
+                className="bg-amber-600 hover:bg-amber-500 text-themebtn font-semibold px-4 py-2 rounded-lg text-xs font-mono transition"
               >
                 {lang === 'pt' ? 'Compreendi' : 'Understood'}
               </button>
@@ -983,7 +983,7 @@ export const IPSetManager: React.FC<IPSetManagerProps> = ({
               </button>
               <button
                 type="submit"
-                className="bg-amber-600 hover:bg-amber-500 text-black font-bold px-4 py-1.5 rounded-lg text-xs font-mono shadow-md shadow-amber-950/40 transition"
+                className="bg-amber-600 hover:bg-amber-500 text-themebtn font-semibold px-4 py-1.5 rounded-lg text-xs font-mono shadow-md shadow-amber-950/40 transition"
               >
                 {lang === 'pt' ? 'Criar IPSet' : 'Create IPSet'}
               </button>
@@ -1033,7 +1033,7 @@ export const IPSetManager: React.FC<IPSetManagerProps> = ({
                 </button>
                 <button
                   onClick={handleApplyBulk}
-                  className="bg-amber-600 hover:bg-amber-500 text-black font-bold px-4 py-1.5 rounded-lg text-xs font-mono flex items-center gap-1.5 shadow-md shadow-amber-950/40 transition"
+                  className="bg-amber-600 hover:bg-amber-500 text-themebtn font-semibold px-4 py-1.5 rounded-lg text-xs font-mono flex items-center gap-1.5 shadow-md shadow-amber-950/40 transition"
                 >
                   <Plus className="w-4 h-4 stroke-[2.5]" />
                   <span>{lang === 'pt' ? 'Adicionar Itens à Lista' : 'Add to List'}</span>

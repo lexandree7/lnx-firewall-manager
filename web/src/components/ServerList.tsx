@@ -66,9 +66,9 @@ export const ServerList: React.FC<ServerListProps> = ({ servers = [], onRefresh,
           <button
             onClick={handleGenerateToken}
             disabled={loadingToken}
-            className="bg-amber-600 hover:bg-amber-500 text-black font-bold px-4 py-2 rounded-lg text-sm flex items-center gap-2 shadow-lg shadow-amber-950/40 transition disabled:opacity-50"
+            className="bg-amber-600 hover:bg-amber-500 text-themebtn font-semibold px-4 py-2 rounded-lg text-sm flex items-center gap-2 shadow-lg shadow-amber-950/40 transition disabled:opacity-50"
           >
-            <Plus className="w-4 h-4 text-black" />
+            <Plus className="w-4 h-4 text-themebtn" />
             <span>{lang === 'pt' ? 'Adicionar Servidor' : 'Add Server'}</span>
           </button>
         </div>

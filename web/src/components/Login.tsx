@@ -186,10 +186,10 @@ export const Login: React.FC<LoginProps> = ({
           <button
             type="submit"
             disabled={loading}
-            className="w-full mt-2 bg-amber-600 hover:bg-amber-500 text-black font-bold py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 transition disabled:opacity-50 shadow-md shadow-amber-600/20 active:scale-[0.99]"
+            className="w-full mt-2 bg-amber-600 hover:bg-amber-500 text-themebtn font-semibold py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 transition disabled:opacity-50 shadow-md shadow-amber-600/20 active:scale-[0.99]"
           >
             {loading ? (
-              <span className="inline-block w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
+              <span className="inline-block w-4 h-4 border-2 border-themebtn border-t-transparent rounded-full animate-spin" />
             ) : (
               <>
                 <span>{lang === 'pt' ? 'Acessar Painel' : 'Sign In'}</span>

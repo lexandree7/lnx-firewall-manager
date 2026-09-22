@@ -808,9 +808,9 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
 
               <button
                 onClick={handleOpenPreview}
-                className="bg-amber-600 hover:bg-amber-500 text-black font-bold px-4 py-2 rounded-lg text-sm flex items-center gap-2 shadow-lg shadow-amber-950/40 transition"
+                className="bg-amber-600 hover:bg-amber-500 text-themebtn font-semibold px-4 py-2 rounded-lg text-sm flex items-center gap-2 shadow-lg shadow-amber-950/40 transition"
               >
-                <Play className="w-4 h-4 fill-black" />
+                <Play className="w-4 h-4 fill-current" />
                 <span>{lang === 'pt' ? 'Revisar & Aplicar' : 'Review & Apply'}</span>
               </button>
             </>
@@ -935,14 +935,14 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
                   onClick={() => setSelectedChain(ch)}
                   className={`px-3 py-1.5 rounded-lg text-xs font-mono font-medium transition flex items-center gap-1.5 ${
                     isSelected
-                      ? 'bg-amber-600 text-black shadow-md shadow-amber-950/40 font-bold'
+                      ? 'bg-amber-600 text-themebtn shadow-md shadow-amber-950/40 font-semibold'
                       : 'bg-zinc-900 text-zinc-300 hover:bg-zinc-800'
                   }`}
                 >
                   <span>:{ch}</span>
                   <span
                     className={`text-[10px] px-1.5 py-0.2 rounded-full font-sans ${
-                      isSelected ? 'bg-black/30 text-black font-bold' : 'bg-zinc-800 text-zinc-400'
+                      isSelected ? 'bg-black/20 text-themebtn font-semibold' : 'bg-zinc-800 text-zinc-400'
                     }`}
                   >
                     {ruleCount}
@@ -1248,7 +1248,7 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
               </button>
               <button
                 type="submit"
-                className="bg-amber-600 hover:bg-amber-500 text-black font-bold px-4 py-1.5 rounded-lg text-xs shadow-md shadow-amber-950/40 transition"
+                className="bg-amber-600 hover:bg-amber-500 text-themebtn font-semibold px-4 py-1.5 rounded-lg text-xs shadow-md shadow-amber-950/40 transition"
               >
                 {lang === 'pt' ? 'Criar Chain' : 'Create Chain'}
               </button>
@@ -1575,7 +1575,7 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
               </button>
               <button
                 type="submit"
-                className="bg-amber-600 hover:bg-amber-500 text-black font-bold px-5 py-2 rounded-lg text-sm shadow-lg shadow-amber-950/40 transition flex items-center gap-1.5"
+                className="bg-amber-600 hover:bg-amber-500 text-themebtn font-semibold px-5 py-2 rounded-lg text-sm shadow-lg shadow-amber-950/40 transition flex items-center gap-1.5"
               >
                 {editingRuleId ? (
                   <>
@@ -1643,7 +1643,7 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
                   type="button"
                   disabled={isApplying}
                   onClick={handleApplyCommit}
-                  className="bg-amber-600 hover:bg-amber-500 text-black font-bold px-4 py-1.5 rounded-lg text-sm transition disabled:opacity-50 shadow-md shadow-amber-950/40"
+                  className="bg-amber-600 hover:bg-amber-500 text-themebtn font-semibold px-4 py-1.5 rounded-lg text-sm transition disabled:opacity-50 shadow-md shadow-amber-950/40"
                 >
                   {isApplying ? 'Aplicando...' : 'Aplicar com Proteção (30s)'}
                 </button>

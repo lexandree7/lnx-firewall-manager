@@ -132,3 +132,54 @@ export interface TOTPSetupData {
   account_name: string;
 }
 
+export type ThemeId = 'slate' | 'ochre' | 'sage' | 'zinc';
+
+export interface ThemeConfig {
+  id: ThemeId;
+  namePt: string;
+  nameEn: string;
+  descriptionPt: string;
+  descriptionEn: string;
+  previewColor: string;
+  badgeBg: string;
+}
+
+export const AVAILABLE_THEMES: ThemeConfig[] = [
+  {
+    id: 'slate',
+    namePt: 'Azul Aço Fosco (Padrão)',
+    nameEn: 'Steel Slate (Default)',
+    descriptionPt: 'Visual corporativo e sofisticado com tons de ardósia e azul aço fosco.',
+    descriptionEn: 'Sleek corporate console with muted steel and slate accents.',
+    previewColor: '#64748b',
+    badgeBg: 'bg-slate-500/20 text-slate-300 border-slate-500/30',
+  },
+  {
+    id: 'ochre',
+    namePt: 'Ocre Sóbrio',
+    nameEn: 'Warm Ochre',
+    descriptionPt: 'Âmbar terroso fosco e suave aos olhos, elegante e sem brilhos excessivos.',
+    descriptionEn: 'Refined warm amber and earthy ochre with zero harsh glare.',
+    previewColor: '#c28b38',
+    badgeBg: 'bg-amber-600/20 text-amber-300 border-amber-600/30',
+  },
+  {
+    id: 'sage',
+    namePt: 'Verde Sálvia Nórdico',
+    nameEn: 'Nordic Sage',
+    descriptionPt: 'Tons suaves de sálvia e floresta fosca, perfeito para monitoramento contínuo.',
+    descriptionEn: 'Gentle organic sage and muted forest green for calm monitoring.',
+    previewColor: '#52796f',
+    badgeBg: 'bg-emerald-700/20 text-emerald-300 border-emerald-600/30',
+  },
+  {
+    id: 'zinc',
+    namePt: 'Titânio Monocromático',
+    nameEn: 'Titanium Stealth',
+    descriptionPt: 'Estética minimalista pura em grafite e titânio acetinado de alto contraste.',
+    descriptionEn: 'Pure minimalist stealth aesthetic in graphite and satin titanium.',
+    previewColor: '#71717a',
+    badgeBg: 'bg-zinc-600/20 text-zinc-300 border-zinc-500/30',
+  },
+];
+

@@ -78,7 +78,7 @@ export const BackupManager: React.FC<BackupManagerProps> = ({
         {isAdmin ? (
           <button
             onClick={handleCreateSnapshot}
-            className="bg-amber-600 hover:bg-amber-500 text-black font-bold px-3.5 py-2 rounded-lg text-sm flex items-center gap-2 shadow-lg shadow-amber-950/40 transition"
+            className="bg-amber-600 hover:bg-amber-500 text-themebtn font-semibold px-3.5 py-2 rounded-lg text-sm flex items-center gap-2 shadow-lg shadow-amber-950/40 transition"
           >
             <Plus className="w-4 h-4 stroke-[2.5]" />
             <span>{lang === 'pt' ? 'Criar Backup Agora' : 'Create Backup Now'}</span>

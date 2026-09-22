@@ -1,6 +1,6 @@
 import React from 'react';
-import { Shield, Server as ServerIcon, Globe, AlertTriangle, CheckCircle2, User as UserIcon, LogOut, KeyRound } from 'lucide-react';
-import { Server, User } from '../types';
+import { Shield, Server as ServerIcon, Globe, AlertTriangle, CheckCircle2, User as UserIcon, LogOut, KeyRound, Palette } from 'lucide-react';
+import { Server, User, ThemeId, AVAILABLE_THEMES } from '../types';
 
 interface NavbarProps {
   servers: Server[];
@@ -15,6 +15,8 @@ interface NavbarProps {
   currentUser: User | null;
   onOpenUserManagement: () => void;
   onLogout: () => void;
+  currentTheme?: ThemeId;
+  onSelectTheme?: (theme: ThemeId) => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -30,6 +32,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   currentUser,
   onOpenUserManagement,
   onLogout,
+  currentTheme = 'slate',
+  onSelectTheme,
 }) => {
   const safeServers = Array.isArray(servers) ? servers : [];
   const onlineCount = safeServers.filter((s) => s && s.status === 'online').length;
@@ -50,7 +54,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
           <button
             onClick={onConfirmRollback}
-            className="bg-amber-500 hover:bg-amber-600 text-black font-bold px-3 py-1 rounded text-xs transition"
+            className="bg-amber-500 hover:bg-amber-600 text-themebtn font-semibold px-3 py-1 rounded text-xs transition"
           >
             {lang === 'pt' ? 'Confirmar Permanência Agora' : 'Confirm Changes Now'}
           </button>
@@ -135,6 +139,37 @@ export const Navbar: React.FC<NavbarProps> = ({
               >
                 <LogOut className="w-3.5 h-3.5" />
               </button>
+            </div>
+          )}
+
+          {/* Quick Theme Switcher */}
+          {onSelectTheme && (
+            <div
+              className="flex items-center bg-zinc-950 border border-zinc-800 rounded-lg p-1 gap-1"
+              title={lang === 'pt' ? 'Tema de Cores' : 'Color Theme'}
+            >
+              <Palette className="w-3.5 h-3.5 text-zinc-400 ml-1 mr-0.5 shrink-0 hidden sm:block" />
+              {AVAILABLE_THEMES.map((th) => {
+                const isActive = (currentTheme || 'slate') === th.id;
+                return (
+                  <button
+                    key={th.id}
+                    type="button"
+                    onClick={() => onSelectTheme(th.id)}
+                    className={`w-5 h-5 rounded-md flex items-center justify-center transition-all ${
+                      isActive
+                        ? 'ring-1.5 ring-amber-400 bg-zinc-800 shadow-sm scale-110'
+                        : 'hover:bg-zinc-900 opacity-60 hover:opacity-100'
+                    }`}
+                    title={`${lang === 'pt' ? th.namePt : th.nameEn}${isActive ? (lang === 'pt' ? ' (Ativo)' : ' (Active)') : ''}`}
+                  >
+                    <span
+                      className="w-2.5 h-2.5 rounded-full border border-black/40 shadow-inner"
+                      style={{ backgroundColor: th.previewColor }}
+                    />
+                  </button>
+                );
+              })}
             </div>
           )}
 
