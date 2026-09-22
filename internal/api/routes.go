@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -119,6 +120,7 @@ func (api *ServerAPI) RegisterRoutes(r chi.Router, webDir string) {
 
 			// Leitura de Regras e Preview
 			r.Get("/servers/{id}/rules", api.handleGetServerRules)
+			r.Get("/servers/{id}/interfaces", api.handleGetServerInterfaces)
 			r.Post("/rules/batch/preview", api.handleBatchPreview)
 
 			// Leitura de IPSets
@@ -494,6 +496,29 @@ func (api *ServerAPI) handleGetServerRules(w http.ResponseWriter, r *http.Reques
 		parsedV4, _ = parser.ParseIptablesSave(rawV4)
 	}
 
+	interfaces := api.hub.GetLatestInterfaces(id)
+	if len(interfaces) == 0 {
+		// Fallback local se o servidor/agente estiverem no mesmo host ou antes do heartbeat
+		if ifaces, err := net.Interfaces(); err == nil {
+			for _, iface := range ifaces {
+				ni := models.NetworkInterface{
+					Name:        iface.Name,
+					MAC:         iface.HardwareAddr.String(),
+					Flags:       iface.Flags.String(),
+					IsUp:        iface.Flags&net.FlagUp != 0,
+					IsLoopback:  iface.Flags&net.FlagLoopback != 0,
+					IPAddresses: make([]string, 0),
+				}
+				if addrs, err := iface.Addrs(); err == nil {
+					for _, a := range addrs {
+						ni.IPAddresses = append(ni.IPAddresses, a.String())
+					}
+				}
+				interfaces = append(interfaces, ni)
+			}
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"server_id":      srv.ID,
@@ -503,7 +528,35 @@ func (api *ServerAPI) handleGetServerRules(w http.ResponseWriter, r *http.Reques
 		"raw_rules_v6":   rawV6,
 		"parsed_v4":      parsedV4,
 		"stats":          stats,
+		"interfaces":     interfaces,
 	})
+}
+
+func (api *ServerAPI) handleGetServerInterfaces(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	interfaces := api.hub.GetLatestInterfaces(id)
+	if len(interfaces) == 0 {
+		if ifaces, err := net.Interfaces(); err == nil {
+			for _, iface := range ifaces {
+				ni := models.NetworkInterface{
+					Name:        iface.Name,
+					MAC:         iface.HardwareAddr.String(),
+					Flags:       iface.Flags.String(),
+					IsUp:        iface.Flags&net.FlagUp != 0,
+					IsLoopback:  iface.Flags&net.FlagLoopback != 0,
+					IPAddresses: make([]string, 0),
+				}
+				if addrs, err := iface.Addrs(); err == nil {
+					for _, a := range addrs {
+						ni.IPAddresses = append(ni.IPAddresses, a.String())
+					}
+				}
+				interfaces = append(interfaces, ni)
+			}
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(interfaces)
 }
 
 func (api *ServerAPI) handleBatchPreview(w http.ResponseWriter, r *http.Request) {

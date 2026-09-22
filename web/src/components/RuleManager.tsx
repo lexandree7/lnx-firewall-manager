@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Rule, Server, RuleCounterSample, IPSetItem } from '../types';
+import { Rule, Server, RuleCounterSample, IPSetItem, NetworkInterface } from '../types';
 import {
   ShieldAlert,
   Plus,
@@ -26,6 +26,11 @@ import {
   ArrowRightLeft,
   ChevronDown,
   Pencil,
+  Network,
+  ChevronRight,
+  ChevronLeft,
+  Search,
+  Server as ServerIcon,
 } from 'lucide-react';
 import { api } from '../api/client';
 
@@ -97,6 +102,42 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
   const [isLiveSynced, setIsLiveSynced] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
   const [isModifiedLocally, setIsModifiedLocally] = useState(false);
+
+  // Painel lateral e estado de interfaces de rede do servidor ativo
+  const [serverInterfaces, setServerInterfaces] = useState<NetworkInterface[]>([
+    {
+      name: 'lo',
+      mac: '00:00:00:00:00:00',
+      ips: ['127.0.0.1/8', '::1/128'],
+      flags: 'up|loopback',
+      is_up: true,
+      is_loopback: true,
+    },
+    {
+      name: 'eth0',
+      mac: '52:54:00:12:34:56',
+      ips: ['192.168.1.150/24', 'fe80::5054:ff:fe12:3456/64'],
+      flags: 'up|broadcast|multicast',
+      is_up: true,
+      is_loopback: false,
+    },
+    {
+      name: 'eth1',
+      mac: '52:54:00:9a:bc:de',
+      ips: ['10.0.0.1/24'],
+      flags: 'up|broadcast|multicast',
+      is_up: true,
+      is_loopback: false,
+    },
+  ]);
+  const [showInterfacesSidebar, setShowInterfacesSidebar] = useState<boolean>(() => {
+    const saved = localStorage.getItem('lfm_show_ifaces_panel');
+    return saved !== null ? saved === 'true' : true;
+  });
+  const [interfaceSearch, setInterfaceSearch] = useState<string>('');
+  const [rulesFilter, setRulesFilter] = useState<string>('');
+  const [copiedIfaceText, setCopiedIfaceText] = useState<string | null>(null);
+  const [isLoadingInterfaces, setIsLoadingInterfaces] = useState<boolean>(false);
 
   // Lista de IPSets disponíveis para vinculação
   const [availableIPSets, setAvailableIPSets] = useState<IPSetItem[]>([
@@ -355,10 +396,90 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
     });
   };
 
+  const toggleInterfacesSidebar = () => {
+    setShowInterfacesSidebar((prev) => {
+      const next = !prev;
+      localStorage.setItem('lfm_show_ifaces_panel', String(next));
+      return next;
+    });
+  };
+
+  const handleCopyText = (text: string) => {
+    if (!text) return;
+    navigator.clipboard?.writeText(text);
+    setCopiedIfaceText(text);
+    setTimeout(() => {
+      setCopiedIfaceText((cur) => (cur === text ? null : cur));
+    }, 2000);
+  };
+
+  const handleInsertInterface = (ifaceName: string, targetField: 'in' | 'out') => {
+    setRuleForm((prev) => ({
+      ...prev,
+      [targetField === 'in' ? 'in_interface' : 'out_interface']: ifaceName,
+    }));
+    setShowAddModal(true);
+  };
+
+  const reloadInterfaces = async (targetId: string) => {
+    if (!targetId || targetId === 'ALL') return;
+    setIsLoadingInterfaces(true);
+    try {
+      const ifaces = await api.getServerInterfaces(targetId);
+      if (ifaces && ifaces.length > 0) {
+        setServerInterfaces(ifaces);
+      }
+    } catch (err) {
+      console.warn('Erro ao atualizar interfaces:', err);
+    } finally {
+      setIsLoadingInterfaces(false);
+    }
+  };
+
   // Filtra regras estritamente para a tabela e chain selecionadas
   const visibleRules = rules.filter(
     (r) => (r.table_name || 'filter') === selectedTable && (r.chain_name || 'INPUT') === selectedChain
   );
+
+  // Filtro de texto / interface sobre as regras visíveis
+  const filteredVisibleRules = visibleRules.filter((r) => {
+    if (!rulesFilter.trim()) return true;
+    const q = rulesFilter.toLowerCase().trim();
+    const inIf = (r.in_interface || '').toLowerCase();
+    const outIf = (r.out_interface || '').toLowerCase();
+    const raw = (r.raw_rule_text || '').toLowerCase();
+    const src = (r.src_ip || '').toLowerCase();
+    const dst = (r.dst_ip || '').toLowerCase();
+    const cmt = (r.comment || '').toLowerCase();
+    const tgt = (r.target || '').toLowerCase();
+    const proto = (r.protocol || '').toLowerCase();
+    const sports = (r.src_ports || '').toLowerCase();
+    const dports = (r.dst_ports || '').toLowerCase();
+
+    return (
+      inIf.includes(q) ||
+      outIf.includes(q) ||
+      raw.includes(q) ||
+      src.includes(q) ||
+      dst.includes(q) ||
+      cmt.includes(q) ||
+      tgt.includes(q) ||
+      proto.includes(q) ||
+      sports.includes(q) ||
+      dports.includes(q)
+    );
+  });
+
+  // Interfaces filtradas na busca lateral
+  const filteredInterfaces = serverInterfaces.filter((iface) => {
+    if (!interfaceSearch.trim()) return true;
+    const q = interfaceSearch.toLowerCase().trim();
+    const matchName = iface.name.toLowerCase().includes(q);
+    const matchMac = iface.mac?.toLowerCase().includes(q);
+    const matchIp = iface.ips?.some((ip) => ip.toLowerCase().includes(q));
+    const matchFlags = iface.flags?.toLowerCase().includes(q);
+    return matchName || matchMac || matchIp || matchFlags;
+  });
 
   // Calcula a quantidade de regras por chain para exibição de badges
   const getChainRuleCount = (tbl: TableType, ch: string) => {
@@ -637,6 +758,19 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
     setIsLoadingLiveRules(true);
     try {
       const data = await api.getServerRules(targetId);
+      if (data && data.interfaces && Array.isArray(data.interfaces) && data.interfaces.length > 0) {
+        setServerInterfaces(data.interfaces);
+      } else {
+        try {
+          const ifaces = await api.getServerInterfaces(targetId);
+          if (ifaces && ifaces.length > 0) {
+            setServerInterfaces(ifaces);
+          }
+        } catch {
+          // fallback silencioso caso ainda não esteja disponível
+        }
+      }
+
       if (data && data.parsed_v4 && data.parsed_v4.Tables) {
         const loadedRules: Rule[] = [];
         const loadedChains: Record<TableType, string[]> = { ...DEFAULT_CHAINS_BY_TABLE };
@@ -795,6 +929,22 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
               <span>{lang === 'pt' ? 'Sincronizar Kernel' : 'Sync Live'}</span>
             </button>
           )}
+
+          <button
+            onClick={toggleInterfacesSidebar}
+            className={`px-3.5 py-2 rounded-lg text-sm flex items-center gap-2 border transition ${
+              showInterfacesSidebar
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-sm shadow-amber-950 font-medium'
+                : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border-zinc-800'
+            }`}
+            title={lang === 'pt' ? 'Exibir/ocultar painel lateral de interfaces de rede' : 'Toggle network interfaces side panel'}
+          >
+            <Network className="w-4 h-4 text-amber-400" />
+            <span>{lang === 'pt' ? 'Interfaces' : 'Interfaces'}</span>
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-zinc-800 text-zinc-300 font-mono font-bold">
+              {serverInterfaces.length}
+            </span>
+          </button>
 
           {isAdmin ? (
             <>
@@ -984,18 +1134,47 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
             </button>
           </div>
 
-          <div className="text-xs text-zinc-400 font-mono">
-            {lang === 'pt' ? 'Visualizando:' : 'Viewing:'}{' '}
-            <span className="text-amber-400 font-bold">*{selectedTable}</span>
-            <span className="text-zinc-600"> / </span>
-            <span className="text-amber-300 font-bold">:{selectedChain}</span>{' '}
-            <span className="text-zinc-400">({visibleRules.length} {visibleRules.length === 1 ? 'regra' : 'regras'})</span>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-2.5 top-2" />
+              <input
+                type="text"
+                value={rulesFilter}
+                onChange={(e) => setRulesFilter(e.target.value)}
+                placeholder={lang === 'pt' ? 'Filtrar regras nesta chain...' : 'Filter rules in chain...'}
+                className="bg-black border border-zinc-800 rounded-lg pl-8 pr-7 py-1 text-xs text-zinc-200 outline-none focus:border-amber-500 font-mono w-44 sm:w-56 transition"
+              />
+              {rulesFilter && (
+                <button
+                  onClick={() => setRulesFilter('')}
+                  className="absolute right-2 top-1.5 text-zinc-500 hover:text-zinc-200"
+                  title={lang === 'pt' ? 'Limpar filtro' : 'Clear filter'}
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+
+            <div className="text-xs text-zinc-400 font-mono">
+              {lang === 'pt' ? 'Visualizando:' : 'Viewing:'}{' '}
+              <span className="text-amber-400 font-bold">*{selectedTable}</span>
+              <span className="text-zinc-600"> / </span>
+              <span className="text-amber-300 font-bold">:{selectedChain}</span>{' '}
+              <span className="text-zinc-400">
+                ({filteredVisibleRules.length}
+                {filteredVisibleRules.length !== visibleRules.length ? ` de ${visibleRules.length}` : ''}{' '}
+                {visibleRules.length === 1 ? 'regra' : 'regras'})
+              </span>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Tabela de Regras Dinâmica e Filtrada Estritamente */}
-      <div className="bg-zinc-950 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl">
+      {/* Container Principal: Tabela de Regras + Painel Lateral de Interfaces */}
+      <div className="flex flex-col xl:flex-row items-start gap-6">
+        {/* Coluna Principal: Tabela de Regras */}
+        <div className="flex-1 min-w-0 w-full space-y-4">
+          <div className="bg-zinc-950 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm text-zinc-300">
             <thead className="bg-zinc-900/90 text-xs text-zinc-400 uppercase font-mono border-b border-zinc-800">
@@ -1060,8 +1239,27 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
                     </div>
                   </td>
                 </tr>
+              ) : filteredVisibleRules.length === 0 ? (
+                <tr>
+                  <td colSpan={10} className="px-4 py-10 text-center">
+                    <div className="flex flex-col items-center justify-center space-y-2">
+                      <Search className="w-8 h-8 text-zinc-600 mb-1" />
+                      <div className="text-sm font-semibold text-zinc-300">
+                        {lang === 'pt'
+                          ? `Nenhuma regra encontrada com o filtro "${rulesFilter}"`
+                          : `No rules found matching "${rulesFilter}"`}
+                      </div>
+                      <button
+                        onClick={() => setRulesFilter('')}
+                        className="mt-2 text-xs text-amber-400 hover:text-amber-300 underline font-mono"
+                      >
+                        {lang === 'pt' ? 'Limpar filtro de busca' : 'Clear search filter'}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
               ) : (
-                visibleRules.map((r, idx) => {
+                filteredVisibleRules.map((r, idx) => {
                   const sampleKey = `${r.table_name || 'filter'}:${r.chain_name || 'INPUT'}:${r.position}`;
                   const liveSample = telemetrySamples[sampleKey];
                   const packets = liveSample ? liveSample.packets : r.packet_counter;
@@ -1242,6 +1440,255 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
           </table>
         </div>
       </div>
+    </div>
+
+    {/* Painel Lateral de Interfaces de Rede */}
+    {showInterfacesSidebar && (
+      <aside className="w-full xl:w-96 shrink-0 bg-zinc-950 border border-zinc-800 rounded-2xl p-4 shadow-2xl space-y-4">
+        {/* Cabeçalho do Painel Lateral */}
+        <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
+          <div className="flex items-center gap-2">
+            <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400">
+              <Network className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="font-bold text-sm text-zinc-100 flex items-center gap-2">
+                <span>{lang === 'pt' ? 'Interfaces de Rede' : 'Network Interfaces'}</span>
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-zinc-800 text-zinc-300">
+                  {serverInterfaces.length}
+                </span>
+              </h3>
+              <p className="text-[11px] text-zinc-400 font-mono truncate max-w-[180px]">
+                {selectedServerId === 'ALL'
+                  ? (lang === 'pt' ? 'Host Local / Teste' : 'Local / Test Host')
+                  : (safeServers.find((s) => s.id === selectedServerId)?.hostname || selectedServerId)}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1">
+            {selectedServerId !== 'ALL' && (
+              <button
+                onClick={() => reloadInterfaces(selectedServerId)}
+                disabled={isLoadingInterfaces}
+                className="p-1.5 text-zinc-400 hover:text-zinc-100 rounded-lg hover:bg-zinc-900 border border-transparent hover:border-zinc-800 transition disabled:opacity-50"
+                title={lang === 'pt' ? 'Atualizar interfaces do nó' : 'Refresh node interfaces'}
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoadingInterfaces ? 'animate-spin text-amber-400' : ''}`} />
+              </button>
+            )}
+            <button
+              onClick={toggleInterfacesSidebar}
+              className="p-1.5 text-zinc-400 hover:text-zinc-100 rounded-lg hover:bg-zinc-900 border border-transparent hover:border-zinc-800 transition"
+              title={lang === 'pt' ? 'Ocultar painel' : 'Close panel'}
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Barra de Busca de Interfaces */}
+        <div className="relative">
+          <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-2.5 top-2.5" />
+          <input
+            type="text"
+            value={interfaceSearch}
+            onChange={(e) => setInterfaceSearch(e.target.value)}
+            placeholder={lang === 'pt' ? 'Filtrar por nome, MAC ou IP...' : 'Filter by name, MAC or IP...'}
+            className="w-full bg-black border border-zinc-800 rounded-lg pl-8 pr-7 py-1.5 text-xs text-zinc-200 outline-none placeholder:text-zinc-600 focus:border-amber-500 transition font-mono"
+          />
+          {interfaceSearch && (
+            <button
+              onClick={() => setInterfaceSearch('')}
+              className="absolute right-2 top-2 text-zinc-500 hover:text-zinc-300"
+              title={lang === 'pt' ? 'Limpar busca' : 'Clear search'}
+            >
+              <X className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+
+        {/* Dica de Utilização Rápida */}
+        <div className="text-[11px] text-zinc-500 flex items-center gap-1.5 font-mono bg-zinc-900/50 p-2 rounded-lg border border-zinc-800/60">
+          <span className="text-amber-400 font-bold">Dica:</span>
+          <span>
+            {lang === 'pt'
+              ? 'Clique em In (-i) ou Out (-o) para preencher a regra.'
+              : 'Click In (-i) or Out (-o) to auto-fill rule.'}
+          </span>
+        </div>
+
+        {/* Lista de Cards de Interfaces */}
+        <div className="space-y-3 max-h-[620px] overflow-y-auto pr-1">
+          {filteredInterfaces.length === 0 ? (
+            <div className="p-6 text-center text-xs text-zinc-500 border border-dashed border-zinc-800 rounded-xl">
+              {lang === 'pt'
+                ? 'Nenhuma interface de rede correspondente.'
+                : 'No matching network interfaces.'}
+            </div>
+          ) : (
+            filteredInterfaces.map((iface) => {
+              const isUp = iface.is_up;
+              const isLoopback = iface.is_loopback;
+
+              return (
+                <div
+                  key={iface.name}
+                  className="bg-zinc-900/80 border border-zinc-800 hover:border-zinc-700 rounded-xl p-3 space-y-2.5 transition shadow-sm"
+                >
+                  {/* Linha 1: Nome da Interface e Badges de Status */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Network className="w-4 h-4 text-amber-400" />
+                      <span className="font-mono font-bold text-sm text-zinc-100">
+                        {iface.name}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 font-mono text-[10px]">
+                      {isLoopback && (
+                        <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/30">
+                          LOOPBACK
+                        </span>
+                      )}
+                      <span
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-bold ${
+                          isUp
+                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                            : 'bg-zinc-800 text-zinc-400 border border-zinc-700'
+                        }`}
+                      >
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full ${
+                            isUp ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-500'
+                          }`}
+                        />
+                        {isUp ? 'UP' : 'DOWN'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Linha 2: Endereço MAC de Hardware */}
+                  <div className="bg-black/60 px-2.5 py-1.5 rounded-lg border border-zinc-800/80 flex items-center justify-between text-xs font-mono">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="text-[10px] text-zinc-500 uppercase font-sans font-semibold">
+                        MAC:
+                      </span>
+                      <span className="text-zinc-200 select-all truncate">
+                        {iface.mac || '00:00:00:00:00:00'}
+                      </span>
+                    </div>
+                    {iface.mac && (
+                      <button
+                        onClick={() => handleCopyText(iface.mac)}
+                        className="ml-2 text-zinc-400 hover:text-zinc-100 transition p-1 hover:bg-zinc-800 rounded shrink-0"
+                        title={lang === 'pt' ? 'Copiar endereço MAC' : 'Copy MAC address'}
+                      >
+                        {copiedIfaceText === iface.mac ? (
+                          <span className="text-emerald-400 text-[10px] flex items-center gap-1">
+                            <Check className="w-3 h-3" />
+                          </span>
+                        ) : (
+                          <Copy className="w-3 h-3" />
+                        )}
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Linha 3: Endereços IP atribuídos */}
+                  <div className="space-y-1">
+                    <div className="text-[10px] text-zinc-500 font-sans font-semibold uppercase flex items-center justify-between">
+                      <span>{lang === 'pt' ? 'Endereços IP:' : 'IP Addresses:'}</span>
+                      <span className="font-mono text-zinc-600">
+                        {iface.ips ? iface.ips.length : 0}
+                      </span>
+                    </div>
+
+                    {iface.ips && iface.ips.length > 0 ? (
+                      <div className="space-y-1">
+                        {iface.ips.map((ip) => {
+                          const isIPv6 = ip.includes(':');
+                          return (
+                            <div
+                              key={ip}
+                              className="bg-black/60 px-2.5 py-1 rounded-lg border border-zinc-800/80 flex items-center justify-between text-xs font-mono group"
+                            >
+                              <span
+                                className={`truncate ${
+                                  isIPv6 ? 'text-zinc-400 text-[11px]' : 'text-amber-300 font-medium'
+                                }`}
+                                title={ip}
+                              >
+                                {ip}
+                              </span>
+                              <button
+                                onClick={() => handleCopyText(ip)}
+                                className="ml-2 text-zinc-500 group-hover:text-zinc-200 transition p-0.5 hover:bg-zinc-800 rounded shrink-0"
+                                title={lang === 'pt' ? 'Copiar endereço IP' : 'Copy IP address'}
+                              >
+                                {copiedIfaceText === ip ? (
+                                  <Check className="w-3 h-3 text-emerald-400" />
+                                ) : (
+                                  <Copy className="w-3 h-3" />
+                                )}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-zinc-600 italic bg-black/40 px-2.5 py-1 rounded border border-zinc-800/60 font-mono">
+                        {lang === 'pt' ? 'Nenhum IP atribuído' : 'No IP address configured'}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Linha 4: Flags de Kernel */}
+                  {iface.flags && (
+                    <div className="text-[10px] text-zinc-500 font-mono truncate" title={iface.flags}>
+                      Flags: <span className="text-zinc-400">{iface.flags}</span>
+                    </div>
+                  )}
+
+                  {/* Linha 5: Ações Rápidas de Inserção e Filtro */}
+                  <div className="pt-2 border-t border-zinc-800/80 flex items-center justify-between gap-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => handleInsertInterface(iface.name, 'in')}
+                        className="px-2 py-1 rounded bg-zinc-800 hover:bg-amber-600/20 text-zinc-300 hover:text-amber-300 border border-zinc-700/80 hover:border-amber-500/40 text-[10px] font-mono font-medium transition flex items-center gap-1"
+                        title={lang === 'pt' ? `Usar ${iface.name} como interface de entrada (-i)` : `Use ${iface.name} as input interface (-i)`}
+                      >
+                        <span>+ In (-i)</span>
+                      </button>
+                      <button
+                        onClick={() => handleInsertInterface(iface.name, 'out')}
+                        className="px-2 py-1 rounded bg-zinc-800 hover:bg-amber-600/20 text-zinc-300 hover:text-amber-300 border border-zinc-700/80 hover:border-amber-500/40 text-[10px] font-mono font-medium transition flex items-center gap-1"
+                        title={lang === 'pt' ? `Usar ${iface.name} como interface de saída (-o)` : `Use ${iface.name} as output interface (-o)`}
+                      >
+                        <span>+ Out (-o)</span>
+                      </button>
+                    </div>
+
+                    <button
+                      onClick={() => setRulesFilter(iface.name)}
+                      className={`px-2 py-1 rounded text-[10px] font-mono transition flex items-center gap-1 border ${
+                        rulesFilter === iface.name
+                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                          : 'bg-zinc-800/60 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border-zinc-700/50'
+                      }`}
+                      title={lang === 'pt' ? `Filtrar regras que utilizam ${iface.name}` : `Filter rules using ${iface.name}`}
+                    >
+                      <Search className="w-2.5 h-2.5" />
+                      <span>{lang === 'pt' ? 'Filtrar' : 'Filter'}</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </aside>
+    )}
+  </div>
 
       {/* Modal de Criação de Custom Chain */}
       {showAddChainModal && (
@@ -1560,6 +2007,24 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
                       placeholder="Ex: eth0, lo, ens192"
                       className="w-full bg-black border border-zinc-800 rounded-lg p-2 text-xs font-mono text-zinc-200 outline-none focus:border-amber-500"
                     />
+                    {serverInterfaces.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {serverInterfaces.map((iface) => (
+                          <button
+                            key={iface.name}
+                            type="button"
+                            onClick={() => setRuleForm({ ...ruleForm, in_interface: iface.name })}
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-mono transition border ${
+                              ruleForm.in_interface === iface.name
+                                ? 'bg-amber-500/20 text-amber-300 border-amber-500/50'
+                                : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-zinc-200'
+                            }`}
+                          >
+                            {iface.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <div>
                     <span className="text-[10px] text-zinc-500 font-mono block mb-1">
@@ -1572,6 +2037,24 @@ export const RuleManager: React.FC<RuleManagerProps> = ({
                       placeholder="Ex: eth1, tun0, wg0"
                       className="w-full bg-black border border-zinc-800 rounded-lg p-2 text-xs font-mono text-zinc-200 outline-none focus:border-amber-500"
                     />
+                    {serverInterfaces.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {serverInterfaces.map((iface) => (
+                          <button
+                            key={iface.name}
+                            type="button"
+                            onClick={() => setRuleForm({ ...ruleForm, out_interface: iface.name })}
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-mono transition border ${
+                              ruleForm.out_interface === iface.name
+                                ? 'bg-amber-500/20 text-amber-300 border-amber-500/50'
+                                : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-zinc-200'
+                            }`}
+                          >
+                            {iface.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

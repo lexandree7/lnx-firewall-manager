@@ -1,4 +1,4 @@
-import { Server, BackupItem, AuditLog, IPSetItem, User, UserSession, OIDCConfig, TOTPSetupData } from '../types';
+import { Server, BackupItem, AuditLog, IPSetItem, User, UserSession, OIDCConfig, TOTPSetupData, NetworkInterface } from '../types';
 
 const BASE_URL = '/api/v1';
 
@@ -186,6 +186,13 @@ export const api = {
     const res = await request(`/servers/${id}/rules`);
     if (!res.ok) throw new Error('Falha ao buscar regras');
     return res.json();
+  },
+
+  async getServerInterfaces(id: string): Promise<NetworkInterface[]> {
+    const res = await request(`/servers/${id}/interfaces`);
+    if (!res.ok) throw new Error('Falha ao buscar interfaces');
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
   },
 
   async previewBatchRules(targetServers: string[], newRulesV4: string) {

@@ -178,10 +178,11 @@ func (c *AgentClient) connectAndListen() error {
 		"agent_version":  "1.0.0",
 		"os_distro":      sysInfo.OSDistro,
 		"kernel_version": sysInfo.KernelVersion,
-		"backend":        sysInfo.IptablesBackend,
+		"backend":          sysInfo.IptablesBackend,
 		"ipv6":             sysInfo.IPv6Supported,
 		"rules_hash":       rulesHash,
 		"current_rules_v4": rawV4,
+		"interfaces":       sysInfo.NetworkInterfaces,
 	}
 
 	if err := c.writeJSON(hello); err != nil {
@@ -236,11 +237,13 @@ func (c *AgentClient) heartbeatLoop(done <-chan struct{}) {
 				})
 			}
 
+			sysInfo, _ := c.executor.CollectSystemInfo()
 			hb := map[string]interface{}{
 				"type":             "HEARTBEAT",
 				"server_id":        c.agentID,
 				"rules_hash":       hash,
 				"current_rules_v4": rawV4,
+				"interfaces":       sysInfo.NetworkInterfaces,
 			}
 			if err := c.writeJSON(hb); err != nil {
 				return

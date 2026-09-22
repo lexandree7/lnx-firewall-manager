@@ -222,3 +222,14 @@ type TOTPEnableRequest struct {
 type TOTPDisableRequest struct {
 	Password string `json:"password"`
 }
+
+// NetworkInterface representa uma interface física ou virtual do servidor
+type NetworkInterface struct {
+	Name        string   `json:"name"`
+	MAC         string   `json:"mac"`
+	IPAddresses []string `json:"ips"`
+	Flags       string   `json:"flags"`
+	IsUp        bool     `json:"is_up"`
+	IsLoopback  bool     `json:"is_loopback"`
+}
+

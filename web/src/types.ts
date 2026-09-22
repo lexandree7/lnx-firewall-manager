@@ -60,6 +60,15 @@ export interface RuleCounterSample {
   rate_bps: number;
 }
 
+export interface NetworkInterface {
+  name: string;
+  mac: string;
+  ips: string[];
+  flags?: string;
+  is_up: boolean;
+  is_loopback: boolean;
+}
+
 export interface IPSetItem {
   id: string;
   name: string;

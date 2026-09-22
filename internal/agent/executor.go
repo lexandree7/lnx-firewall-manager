@@ -10,15 +10,26 @@ import (
 	"strings"
 )
 
+// NetworkInterface contém detalhes de cada interface do host
+type NetworkInterface struct {
+	Name        string   `json:"name"`
+	MAC         string   `json:"mac"`
+	IPAddresses []string `json:"ips"`
+	Flags       string   `json:"flags"`
+	IsUp        bool     `json:"is_up"`
+	IsLoopback  bool     `json:"is_loopback"`
+}
+
 // SystemInfo contém metadados do host gerenciado
 type SystemInfo struct {
-	Hostname        string   `json:"hostname"`
-	OSDistro        string   `json:"os_distro"`
-	KernelVersion   string   `json:"kernel_version"`
-	IptablesBackend string   `json:"iptables_backend"` // "nftables" ou "legacy"
-	IPv6Supported   bool     `json:"ipv6_supported"`
-	IPSetSupported  bool     `json:"ipset_supported"`
-	Interfaces      []string `json:"interfaces"`
+	Hostname          string             `json:"hostname"`
+	OSDistro          string             `json:"os_distro"`
+	KernelVersion     string             `json:"kernel_version"`
+	IptablesBackend   string             `json:"iptables_backend"` // "nftables" ou "legacy"
+	IPv6Supported     bool               `json:"ipv6_supported"`
+	IPSetSupported    bool               `json:"ipset_supported"`
+	Interfaces        []string           `json:"interfaces"`
+	NetworkInterfaces []NetworkInterface `json:"network_interfaces"`
 }
 
 // Executor encapsula comandos seguros do kernel sem invocação de shell
@@ -95,13 +106,28 @@ func (e *Executor) CollectSystemInfo() (*SystemInfo, error) {
 		kernel = strings.TrimSpace(string(out))
 	}
 
-	// Interfaces ativas
+	// Interfaces de rede detalhadas (Nome, MAC, IPs, Status)
 	var ifaceNames []string
+	var ifaceDetails []NetworkInterface
 	if ifaces, err := net.Interfaces(); err == nil {
 		for _, iface := range ifaces {
-			if iface.Flags&net.FlagUp != 0 {
+			detail := NetworkInterface{
+				Name:        iface.Name,
+				MAC:         iface.HardwareAddr.String(),
+				Flags:       iface.Flags.String(),
+				IsUp:        iface.Flags&net.FlagUp != 0,
+				IsLoopback:  iface.Flags&net.FlagLoopback != 0,
+				IPAddresses: make([]string, 0),
+			}
+			if addrs, err := iface.Addrs(); err == nil {
+				for _, addr := range addrs {
+					detail.IPAddresses = append(detail.IPAddresses, addr.String())
+				}
+			}
+			if detail.IsUp {
 				ifaceNames = append(ifaceNames, iface.Name)
 			}
+			ifaceDetails = append(ifaceDetails, detail)
 		}
 	}
 
@@ -120,13 +146,14 @@ func (e *Executor) CollectSystemInfo() (*SystemInfo, error) {
 	}
 
 	return &SystemInfo{
-		Hostname:        hostname,
-		OSDistro:        distro,
-		KernelVersion:   kernel,
-		IptablesBackend: e.DetectBackend(),
-		IPv6Supported:   ipv6Supported,
-		IPSetSupported:  ipsetSupported,
-		Interfaces:      ifaceNames,
+		Hostname:          hostname,
+		OSDistro:          distro,
+		KernelVersion:     kernel,
+		IptablesBackend:   e.DetectBackend(),
+		IPv6Supported:     ipv6Supported,
+		IPSetSupported:    ipsetSupported,
+		Interfaces:        ifaceNames,
+		NetworkInterfaces: ifaceDetails,
 	}, nil
 }
 

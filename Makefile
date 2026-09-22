@@ -1,5 +1,7 @@
 .PHONY: all build test clean run-server run-agent package-deb package-rpm
 
+export PATH := $(HOME)/go/bin:/usr/local/go/bin:$(PATH)
+
 all: build test
 
 build: build-server build-agent

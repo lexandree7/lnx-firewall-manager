@@ -30,6 +30,7 @@ type AgentSession struct {
 	LastRulesHash  string
 	LastRulesV4    string
 	LastRulesV6    string
+	Interfaces     []models.NetworkInterface
 	WriteMu        sync.Mutex
 	PendingCommits map[string]time.Time // changeID -> timestamp
 }
@@ -77,6 +78,7 @@ type AgentInboundMessage struct {
 	Telemetry     []models.RuleCounterSample  `json:"telemetry,omitempty"`
 	CurrentRulesV4 string                     `json:"current_rules_v4,omitempty"`
 	CurrentRulesV6 string                     `json:"current_rules_v6,omitempty"`
+	Interfaces     []models.NetworkInterface  `json:"interfaces,omitempty"`
 }
 
 // NewHub inicializa o hub de comunicação
@@ -169,6 +171,7 @@ func (h *Hub) handleHello(conn *websocket.Conn, msg *AgentInboundMessage, remote
 		LastRulesHash:  msg.RulesHash,
 		LastRulesV4:    msg.CurrentRulesV4,
 		LastRulesV6:    msg.CurrentRulesV6,
+		Interfaces:     msg.Interfaces,
 		PendingCommits: make(map[string]time.Time),
 	}
 
@@ -231,6 +234,9 @@ func (h *Hub) handleHeartbeat(s *AgentSession, msg *AgentInboundMessage) {
 	}
 	if msg.CurrentRulesV6 != "" {
 		s.LastRulesV6 = msg.CurrentRulesV6
+	}
+	if len(msg.Interfaces) > 0 {
+		s.Interfaces = msg.Interfaces
 	}
 	h.mu.Unlock()
 
@@ -437,6 +443,17 @@ func (h *Hub) GetLatestRules(serverID string) (string, string) {
 		return "", ""
 	}
 	return sess.LastRulesV4, sess.LastRulesV6
+}
+
+// GetLatestInterfaces retorna as interfaces de rede do servidor
+func (h *Hub) GetLatestInterfaces(serverID string) []models.NetworkInterface {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	sess, ok := h.agents[serverID]
+	if !ok || sess == nil || len(sess.Interfaces) == 0 {
+		return nil
+	}
+	return sess.Interfaces
 }
 
 func (h *Hub) heartbeatChecker() {
