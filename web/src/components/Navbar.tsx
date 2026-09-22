@@ -42,26 +42,28 @@ export const Navbar: React.FC<NavbarProps> = ({
     <header className="border-b border-zinc-800 bg-black/95 backdrop-blur sticky top-0 z-40">
       {/* Banner de Proteção Contra Lockout se houver confirmação pendente */}
       {pendingRollback && (
-        <div className="bg-amber-500/20 border-b border-amber-500/40 px-4 py-2 flex items-center justify-between text-amber-200 text-sm animate-pulse">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-5 h-5 text-amber-400" />
-            <span>
-              <strong>{lang === 'pt' ? 'Proteção Contra Lockout Ativa:' : 'Active Lockout Protection:'}</strong>{' '}
-              {lang === 'pt'
-                ? `Regras em teste! Reversão automática em ${pendingRollback.secondsRemaining}s se não confirmado.`
-                : `Rules under test! Auto-reverting in ${pendingRollback.secondsRemaining}s if not confirmed.`}
-            </span>
+        <div className="bg-amber-500/20 border-b border-amber-500/40 animate-pulse">
+          <div className="max-w-[1680px] mx-auto px-4 sm:px-6 py-2 flex items-center justify-between text-amber-200 text-sm">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-400" />
+              <span>
+                <strong>{lang === 'pt' ? 'Proteção Contra Lockout Ativa:' : 'Active Lockout Protection:'}</strong>{' '}
+                {lang === 'pt'
+                  ? `Regras em teste! Reversão automática em ${pendingRollback.secondsRemaining}s se não confirmado.`
+                  : `Rules under test! Auto-reverting in ${pendingRollback.secondsRemaining}s if not confirmed.`}
+              </span>
+            </div>
+            <button
+              onClick={onConfirmRollback}
+              className="bg-amber-500 hover:bg-amber-600 text-themebtn font-semibold px-3 py-1 rounded text-xs transition"
+            >
+              {lang === 'pt' ? 'Confirmar Permanência Agora' : 'Confirm Changes Now'}
+            </button>
           </div>
-          <button
-            onClick={onConfirmRollback}
-            className="bg-amber-500 hover:bg-amber-600 text-themebtn font-semibold px-3 py-1 rounded text-xs transition"
-          >
-            {lang === 'pt' ? 'Confirmar Permanência Agora' : 'Confirm Changes Now'}
-          </button>
         </div>
       )}
 
-      <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
+      <div className="max-w-[1680px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
         {/* Logo & Marca com tema escuro e detalhes em amarelo escuro */}
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-lg shadow-amber-500/10">
@@ -185,7 +187,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       </div>
 
       {/* Navegação de Abas com Contador Destacado */}
-      <div className="max-w-7xl mx-auto px-4 flex gap-1 border-t border-zinc-800/80 text-sm overflow-x-auto">
+      <div className="max-w-[1680px] mx-auto px-4 sm:px-6 flex gap-1 border-t border-zinc-800/80 text-sm overflow-x-auto">
         {[
           { id: 'servers', label: lang === 'pt' ? 'Servidores' : 'Servers', count: safeServers.length },
           { id: 'rules', label: lang === 'pt' ? 'Regras & Chains' : 'Rules & Chains' },
