@@ -24,6 +24,9 @@ contents:
   - src: ./web/dist/
     dst: /usr/share/fw-server/web/
     type: "tree"
+  - src: ./certs_data/
+    dst: /var/lib/fw-server/certs/
+    type: "tree"
 
 scripts:
   postinstall: ./packaging/scripts/postinstall-server.sh

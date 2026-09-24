@@ -25,6 +25,13 @@ contents:
     dst: /lib/systemd/system/fw-agent.service
     file_info:
       mode: 0644
+  - src: ./agent_config.json
+    dst: /etc/fw-agent/config.json
+    file_info:
+      mode: 0600
+  - src: ./agent_certs/
+    dst: /etc/fw-agent/certs/
+    type: tree
 
 scripts:
   postinstall: ./packaging/scripts/postinstall-agent.sh
